@@ -118,6 +118,13 @@ module simple_cache #(
 
   logic [C_DW-1:0] resp_data_q, resp_data_d;
   logic            resp_we;
+  logic            comb_hit;
+
+  // Single-cycle combinational hit detection when in IDLE
+  assign comb_hit = (state == IDLE) && c_req_i && hit;
+  assign vc_comb_hit = (state == IDLE) && c_req_i && !hit && vc_hit;
+
+  logic vc_comb_hit;
 
   always_comb begin
     next_state  = state;
@@ -138,11 +145,12 @@ module simple_cache #(
       IDLE: begin
         if (c_req_i) begin
           if (hit) begin
+            // Single-cycle hit: immediate response, no state change needed
             resp_we     = 1'b1;
             resp_data_d = get_data(hit_data, cur_off);
             touch       = 1'b1;
             touch_way   = hit_way;
-            next_state  = RESP;
+            next_state  = IDLE; 
           end else if (vc_hit) begin
             we_main     = 1'b1;
             way_main    = victim_way;
@@ -190,12 +198,13 @@ module simple_cache #(
       resp_data_q <= '0;
     end else begin
       state <= next_state;
-      if (state == IDLE && c_req_i) addr_q <= c_addr_i;
-      if (resp_we)                  resp_data_q <= resp_data_d;
+      if (state == IDLE && c_req_i && !hit) addr_q <= c_addr_i;
+      if (resp_we)                          resp_data_q <= resp_data_d;
     end
   end
 
-  assign c_gnt_o  = (state == RESP);
-  assign c_data_o = resp_data_q;
+  // Grant is asserted immediately on combinational hit or during RESP state
+  assign c_gnt_o  = comb_hit || (state == RESP);
+  assign c_data_o = comb_hit ? get_data(hit_data, cur_off) : resp_data_q;
 
 endmodule
