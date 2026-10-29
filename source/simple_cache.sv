@@ -1,11 +1,15 @@
-module simple_cache
-  import cache_pkg::*;
-#(
-  parameter int AW   = 16,
-  parameter int C_DW = 8,
-  parameter int M_DW = 128,
-  parameter int CL   = 256,
-  parameter int NW   = 4
+module simple_cache #(
+  parameter int AW      = 16,
+  parameter int C_DW    = 8,
+  parameter int M_DW    = 128,
+  parameter int CL      = 256,
+  parameter int NW      = 4,
+  parameter int VC_SIZE = 64,
+`ifdef USE_DRRIP
+  parameter int REPL    = 2     // DRRIP (compile with -d USE_DRRIP)
+`else
+  parameter int REPL    = 1     // 0: true LRU (default), 1: DRRIP
+`endif
 )(
   input  logic             arst_ni,
   input  logic             clk_i,
@@ -22,218 +26,199 @@ module simple_cache
 );
 
   localparam int OFFSET_BITS = $clog2(M_DW/8);
-  localparam int INDEX_BITS  = $clog2(CL/NW);
-  localparam int TAG_BITS    = AW - INDEX_BITS - OFFSET_BITS;
   localparam int SETS        = CL / NW;
-  localparam int VC_SIZE     = 8;
-
-  //==================================================
-  // Address Decode
-  //==================================================
-  tag_t    addr_tag;
-  index_t  addr_index;
-  offset_t addr_offset;
-
-  assign addr_tag    = c_addr_i[AW-1 -: TAG_BITS];
-  assign addr_index  = c_addr_i[OFFSET_BITS +: INDEX_BITS];
-  assign addr_offset = c_addr_i[OFFSET_BITS-1:0];
-
-  //==================================================
-  // Internal Signals
-  //==================================================
-  logic hit, vc_hit;
-  logic [1:0] hit_way, victim_way;
-  line_t hit_data, vc_data;
-  cache_line_t lines [NW-1:0];
-  logic lock [NW-1:0];
+  localparam int INDEX_BITS  = $clog2(SETS);
+  localparam int TAG_BITS    = AW - INDEX_BITS - OFFSET_BITS;
+  localparam int LINE_AW     = AW - OFFSET_BITS;
+  localparam int WB          = (NW > 1) ? $clog2(NW) : 1;
 
   //==================================================
   // FSM
+  //   IDLE   : request accepted, tag + victim cache looked up in the same cycle
+  //   REFILL : m_req_o held high until m_gnt_i (m_gnt_i == m_data_i valid)
+  //   RESP   : c_gnt_o / c_data_o valid for exactly one cycle
   //==================================================
-  typedef enum logic [2:0] {
-    IDLE,
-    LOOKUP,
-    REFILL_REQ,
-    REFILL_WAIT,
-    RESPOND
-  } state_t;
-
+  typedef enum logic [1:0] { IDLE, REFILL, RESP } state_t;
   state_t state, next_state;
-  logic we_main;
-  logic [1:0] way_main;
-  cache_line_t wdata_main;
 
-  logic we_vc;
-  cache_line_t wdata_vc;
+  //==================================================
+  // Address: latched on accept, so the whole transaction uses ONE address
+  //==================================================
+  logic [AW-1:0] addr_q;
+  logic [AW-1:0] cur_addr;
+
+  assign cur_addr = (state == IDLE) ? c_addr_i : addr_q;
+
+  logic [TAG_BITS-1:0]    cur_tag;
+  logic [INDEX_BITS-1:0]  cur_index;
+  logic [OFFSET_BITS-1:0] cur_off;
+  logic [LINE_AW-1:0]     cur_line_addr;
+
+  assign cur_tag       = cur_addr[AW-1 -: TAG_BITS];
+  assign cur_index     = cur_addr[OFFSET_BITS +: INDEX_BITS];
+  assign cur_off       = cur_addr[OFFSET_BITS-1:0];
+  assign cur_line_addr = cur_addr[AW-1:OFFSET_BITS];
+
+  //==================================================
+  // Single byte-select function (hit / victim-hit / refill all use it)
+  //==================================================
+  function automatic logic [C_DW-1:0] get_data(
+    input logic [M_DW-1:0]        line,
+    input logic [OFFSET_BITS-1:0] off
+  );
+    logic [M_DW+C_DW-1:0] ext;
+    ext      = {{C_DW{1'b0}}, line};          // zero-pad: never reads outside the line
+    get_data = ext[int'(off)*8 +: C_DW];
+  endfunction
 
   //==================================================
   // Submodules
   //==================================================
-  tag_data_array #(.SETS(SETS), .NW(NW)) u_tag_data (
-    .clk_i,
-    .arst_ni,
-    .index_i    (addr_index),
-    .tag_i      (addr_tag),
+  logic                 hit, vc_hit;
+  logic [WB-1:0]        hit_way, victim_way;
+  logic [M_DW-1:0]      hit_data, vc_data;
+  logic [NW-1:0]        set_valid;
+  logic [NW-1:0][TAG_BITS-1:0] set_tag;
+  logic [NW-1:0][M_DW-1:0]     set_data;
+
+  logic                 we_main;
+  logic [WB-1:0]        way_main;
+  logic [TAG_BITS-1:0]  wtag_main;
+  logic [M_DW-1:0]      wdata_main;
+
+  logic                 rp_hit, rp_fill;
+
+  logic                 vc_promote, vc_insert;
+
+  // line being pushed out of the main cache (only meaningful if set_valid[victim_way])
+  logic                 evict_valid;
+  logic [LINE_AW-1:0]   evict_addr;
+  logic [M_DW-1:0]      evict_data;
+
+  assign evict_valid = set_valid[victim_way];
+  assign evict_addr  = {set_tag[victim_way], cur_index};
+  assign evict_data  = set_data[victim_way];
+
+  tag_data_array #(.SETS(SETS), .NW(NW), .TAG_BITS(TAG_BITS), .M_DW(M_DW)) u_tag_data (
+    .clk_i, .arst_ni,
+    .index_i    (cur_index),
+    .tag_i      (cur_tag),
     .we_i       (we_main),
     .way_i      (way_main),
+    .wtag_i     (wtag_main),
     .wdata_i    (wdata_main),
     .hit_o      (hit),
     .hit_way_o  (hit_way),
     .hit_data_o (hit_data),
-    .line_o     (lines)
+    .valid_o    (set_valid),
+    .tag_o      (set_tag),
+    .data_o     (set_data)
   );
 
-  lru_pinning_unit #(.SETS(SETS), .NW(NW)) u_lru_pin (
-    .clk_i,
-    .arst_ni,
-    .index_i      (addr_index),
-    .hit_i        (hit && (state == LOOKUP)),
+  lru_pinning_unit #(.SETS(SETS), .NW(NW), .REPL(REPL)) u_lru_pin (
+    .clk_i, .arst_ni,
+    .index_i      (cur_index),
+    .hit_i        (rp_hit),
     .hit_way_i    (hit_way),
-    .allocate_i   (we_main),
-    .alloc_way_i  (way_main),
-    .lines_i      (lines),
-    .victim_way_o (victim_way),
-    .lock_o       (lock)
+    .fill_i       (rp_fill),
+    .fill_way_i   (victim_way),
+    .valid_i      (set_valid),
+    .victim_way_o (victim_way)
   );
 
-  victim_cache #(.VC_SIZE(VC_SIZE)) u_victim (
-    .clk_i,
-    .arst_ni,
-    .tag_i     (addr_tag),
-    .lookup_i  (state == LOOKUP && !hit),
-    .we_i      (we_vc),
-    .wdata_i   (wdata_vc),
-    .hit_o     (vc_hit),
-    .data_o    (vc_data),
-    .hit_idx_o ()
+  victim_cache #(.VC_SIZE(VC_SIZE), .LINE_AW(LINE_AW), .M_DW(M_DW)) u_victim (
+    .clk_i, .arst_ni,
+    .line_addr_i   (cur_line_addr),
+    .promote_i     (vc_promote),
+    .insert_i      (vc_insert),
+    .evict_valid_i (evict_valid),
+    .evict_addr_i  (evict_addr),
+    .evict_data_i  (evict_data),
+    .hit_o         (vc_hit),
+    .data_o        (vc_data)
   );
 
   //==================================================
-  // Byte Select (safe)
+  // Control
   //==================================================
-  function automatic logic [C_DW-1:0] get_byte(input line_t line, input offset_t off);
-    get_byte = line[off*8 +: 8];
-  endfunction
+  logic [C_DW-1:0] resp_data_q, resp_data_d;
+  logic            resp_we;
 
-
-
-  // Registered response data (corruption avoid korte)
-  logic [C_DW-1:0] resp_data_r;
-  logic            resp_valid_r;
-
-  always_ff @(posedge clk_i or negedge arst_ni) begin
-    if (!arst_ni) begin
-      state        <= IDLE;
-      resp_data_r  <= '0;
-      resp_valid_r <= 1'b0;
-    end else begin
-      state <= next_state;
-
-      // Default
-      resp_valid_r <= 1'b0;
-
-      case (state)
-        LOOKUP: begin
-          if (hit) begin
-            resp_data_r  <= get_byte(hit_data, addr_offset);
-            resp_valid_r <= 1'b1;
-          end
-          else if (vc_hit) begin
-            resp_data_r  <= get_byte(vc_data, addr_offset);
-            resp_valid_r <= 1'b1;
-          end
-        end
-
-        REFILL_WAIT: begin
-          if (m_gnt_i) begin
-            resp_data_r  <= get_byte(m_data_i, addr_offset);
-            resp_valid_r <= 1'b1;
-          end
-        end
-      endcase
-    end
-  end
-
-  // Combinational next state + memory request
   always_comb begin
-    next_state = state;
-    m_req_o    = 1'b0;
-    m_addr_o   = '0;
-    we_main    = 1'b0;
-    we_vc      = 1'b0;
-    way_main   = victim_way;
-    wdata_main = '0;
-    wdata_vc   = '0;
-
-    c_gnt_o  = resp_valid_r;
-    c_data_o = resp_data_r;
+    next_state  = state;
+    m_req_o     = 1'b0;
+    m_addr_o    = '0;
+    we_main     = 1'b0;
+    way_main    = victim_way;
+    wtag_main   = cur_tag;
+    wdata_main  = '0;
+    rp_hit      = 1'b0;
+    rp_fill     = 1'b0;
+    vc_promote  = 1'b0;
+    vc_insert   = 1'b0;
+    resp_we     = 1'b0;
+    resp_data_d = '0;
 
     case (state)
       IDLE: begin
-        if (c_req_i)
-          next_state = LOOKUP;
-      end
-
-      LOOKUP: begin
-        if (hit) begin
-          next_state = IDLE;
-        end
-        else if (vc_hit) begin
-          // Promote from Victim → Main
-          we_main = 1'b1;
-          way_main = victim_way;
-
-          wdata_main.valid = 1'b1;
-          wdata_main.lock  = 1'b0;
-          wdata_main.freq  = 2'b01;
-          wdata_main.tag   = addr_tag;
-          wdata_main.data  = vc_data;
-
-          // Old line to Victim
-          if (lines[victim_way].valid) begin
-            we_vc    = 1'b1;
-            wdata_vc = lines[victim_way];
+        if (c_req_i) begin
+          if (hit) begin
+            resp_we     = 1'b1;
+            resp_data_d = get_data(hit_data, cur_off);
+            rp_hit      = 1'b1;
+            next_state  = RESP;
+          end else if (vc_hit) begin
+            // promote victim-cache line into the main cache, swap evicted line into VC
+            we_main     = 1'b1;
+            way_main    = victim_way;
+            wdata_main  = vc_data;
+            vc_promote  = 1'b1;
+            rp_fill     = 1'b1;
+            resp_we     = 1'b1;
+            resp_data_d = get_data(vc_data, cur_off);
+            next_state  = RESP;
+          end else begin
+            next_state  = REFILL;
           end
-
-          next_state = IDLE;
-        end
-        else begin
-          next_state = REFILL_REQ;
         end
       end
 
-      REFILL_REQ: begin
+      REFILL: begin
         m_req_o  = 1'b1;
-        m_addr_o = {addr_tag, addr_index, {OFFSET_BITS{1'b0}}};
-
-        if (m_gnt_i)
-          next_state = REFILL_WAIT;
+        m_addr_o = {cur_line_addr, {OFFSET_BITS{1'b0}}};
+        if (m_gnt_i) begin
+          we_main     = 1'b1;
+          way_main    = victim_way;
+          wdata_main  = m_data_i;
+          vc_insert   = 1'b1;
+          rp_fill     = 1'b1;
+          resp_we     = 1'b1;
+          resp_data_d = get_data(m_data_i, cur_off);
+          next_state  = RESP;
+        end
       end
 
-      REFILL_WAIT: begin
-        if (m_gnt_i) begin
-          // Allocate new line
-          we_main = 1'b1;
-          way_main = victim_way;
-
-          wdata_main.valid = 1'b1;
-          wdata_main.lock  = 1'b0;
-          wdata_main.freq  = 2'b00;
-          wdata_main.tag   = addr_tag;
-          wdata_main.data  = m_data_i;
-
-          // Evict old line to Victim
-          if (lines[victim_way].valid) begin
-            we_vc    = 1'b1;
-            wdata_vc = lines[victim_way];
-          end
-
-          next_state = IDLE;
-        end
+      RESP: begin
+        next_state = IDLE;
       end
 
       default: next_state = IDLE;
     endcase
   end
+
+  always_ff @(posedge clk_i or negedge arst_ni) begin
+    if (!arst_ni) begin
+      state       <= IDLE;
+      addr_q      <= '0;
+      resp_data_q <= '0;
+    end else begin
+      state <= next_state;
+      if (state == IDLE && c_req_i) addr_q <= c_addr_i;
+      if (resp_we)                  resp_data_q <= resp_data_d;
+    end
+  end
+
+  assign c_gnt_o  = (state == RESP);
+  assign c_data_o = resp_data_q;
 
 endmodule
