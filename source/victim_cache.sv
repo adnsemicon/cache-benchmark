@@ -8,7 +8,6 @@ module victim_cache #(
 
   input  logic [LINE_AW-1:0]           line_addr_i,   // address being looked up
 
-
   input  logic                         promote_i,
 
   input  logic                         insert_i,
@@ -43,11 +42,10 @@ module victim_cache #(
       end
     end
 
-    // insertion slot: first free entry, otherwise FIFO pointer
     ins_idx  = wr_ptr;
     ins_free = 1'b0;
-    for (int i = VC_SIZE-1; i >= 0; i--) begin
-      if (!valid_q[i]) begin
+    for (int i = 0; i < VC_SIZE; i++) begin
+      if (!valid_q[i] && !ins_free) begin
         ins_idx  = PB'(i);
         ins_free = 1'b1;
       end
