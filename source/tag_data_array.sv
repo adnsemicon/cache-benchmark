@@ -1,3 +1,4 @@
+// Tag + data storage for the main cache. Fully parameterised (no package types).
 module tag_data_array #(
   parameter int SETS     = 64,
   parameter int NW       = 4,
@@ -10,15 +11,18 @@ module tag_data_array #(
   input  logic [$clog2(SETS)-1:0]           index_i,
   input  logic [TAG_BITS-1:0]               tag_i,
 
+  // Write port (one way of the selected set)
   input  logic                              we_i,
   input  logic [(NW>1 ? $clog2(NW) : 1)-1:0] way_i,
   input  logic [TAG_BITS-1:0]               wtag_i,
   input  logic [M_DW-1:0]                   wdata_i,
 
+  // Lookup result
   output logic                              hit_o,
   output logic [(NW>1 ? $clog2(NW) : 1)-1:0] hit_way_o,
   output logic [M_DW-1:0]                   hit_data_o,
 
+  // Whole-set view (used for victim selection / eviction)
   output logic [NW-1:0]                     valid_o,
   output logic [NW-1:0][TAG_BITS-1:0]       tag_o,
   output logic [NW-1:0][M_DW-1:0]           data_o

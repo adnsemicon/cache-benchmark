@@ -4,7 +4,12 @@ module simple_cache #(
   parameter int M_DW    = 128,
   parameter int CL      = 256,
   parameter int NW      = 4,
-  parameter int VC_SIZE = 8
+  parameter int VC_SIZE = 16,
+`ifdef USE_DRRIP
+  parameter int REPL    = 0     // DRRIP (compile with -d USE_DRRIP)
+`else
+  parameter int REPL    = 1     // 0: true LRU (default), 1: DRRIP
+`endif
 )(
   input  logic             arst_ni,
   input  logic             clk_i,
@@ -27,9 +32,18 @@ module simple_cache #(
   localparam int LINE_AW     = AW - OFFSET_BITS;
   localparam int WB          = (NW > 1) ? $clog2(NW) : 1;
 
+  //==================================================
+  // FSM
+  //   IDLE   : request accepted, tag + victim cache looked up in the same cycle
+  //   REFILL : m_req_o held high until m_gnt_i (m_gnt_i == m_data_i valid)
+  //   RESP   : c_gnt_o / c_data_o valid for exactly one cycle
+  //==================================================
   typedef enum logic [1:0] { IDLE, REFILL, RESP } state_t;
   state_t state, next_state;
 
+  //==================================================
+  // Address: latched on accept, so the whole transaction uses ONE address
+  //==================================================
   logic [AW-1:0] addr_q;
   logic [AW-1:0] cur_addr;
 
@@ -45,15 +59,21 @@ module simple_cache #(
   assign cur_off       = cur_addr[OFFSET_BITS-1:0];
   assign cur_line_addr = cur_addr[AW-1:OFFSET_BITS];
 
+  //==================================================
+  // Single byte-select function (hit / victim-hit / refill all use it)
+  //==================================================
   function automatic logic [C_DW-1:0] get_data(
     input logic [M_DW-1:0]        line,
     input logic [OFFSET_BITS-1:0] off
   );
     logic [M_DW+C_DW-1:0] ext;
-    ext      = {{C_DW{1'b0}}, line};
+    ext      = {{C_DW{1'b0}}, line};          // zero-pad: never reads outside the line
     get_data = ext[int'(off)*8 +: C_DW];
   endfunction
 
+  //==================================================
+  // Submodules
+  //==================================================
   logic                 hit, vc_hit;
   logic [WB-1:0]        hit_way, victim_way;
   logic [M_DW-1:0]      hit_data, vc_data;
@@ -66,11 +86,11 @@ module simple_cache #(
   logic [TAG_BITS-1:0]  wtag_main;
   logic [M_DW-1:0]      wdata_main;
 
-  logic                 touch;
-  logic [WB-1:0]        touch_way;
+  logic                 rp_hit, rp_fill;
 
   logic                 vc_promote, vc_insert;
 
+  // line being pushed out of the main cache (only meaningful if set_valid[victim_way])
   logic                 evict_valid;
   logic [LINE_AW-1:0]   evict_addr;
   logic [M_DW-1:0]      evict_data;
@@ -95,11 +115,13 @@ module simple_cache #(
     .data_o     (set_data)
   );
 
-  lru_pinning_unit #(.SETS(SETS), .NW(NW)) u_lru_pin (
+  lru_pinning_unit #(.SETS(SETS), .NW(NW), .REPL(REPL)) u_lru_pin (
     .clk_i, .arst_ni,
     .index_i      (cur_index),
-    .touch_i      (touch),
-    .touch_way_i  (touch_way),
+    .hit_i        (rp_hit),
+    .hit_way_i    (hit_way),
+    .fill_i       (rp_fill),
+    .fill_way_i   (victim_way),
     .valid_i      (set_valid),
     .victim_way_o (victim_way)
   );
@@ -116,11 +138,11 @@ module simple_cache #(
     .data_o        (vc_data)
   );
 
+  //==================================================
+  // Control
+  //==================================================
   logic [C_DW-1:0] resp_data_q, resp_data_d;
   logic            resp_we;
-  logic            comb_hit;
-
-  assign comb_hit = (state == IDLE) && c_req_i && hit;
 
   always_comb begin
     next_state  = state;
@@ -130,8 +152,8 @@ module simple_cache #(
     way_main    = victim_way;
     wtag_main   = cur_tag;
     wdata_main  = '0;
-    touch       = 1'b0;
-    touch_way   = hit_way;
+    rp_hit      = 1'b0;
+    rp_fill     = 1'b0;
     vc_promote  = 1'b0;
     vc_insert   = 1'b0;
     resp_we     = 1'b0;
@@ -143,16 +165,15 @@ module simple_cache #(
           if (hit) begin
             resp_we     = 1'b1;
             resp_data_d = get_data(hit_data, cur_off);
-            touch       = 1'b1;
-            touch_way   = hit_way;
-            next_state  = IDLE;
+            rp_hit      = 1'b1;
+            next_state  = RESP;
           end else if (vc_hit) begin
+            // promote victim-cache line into the main cache, swap evicted line into VC
             we_main     = 1'b1;
             way_main    = victim_way;
             wdata_main  = vc_data;
             vc_promote  = 1'b1;
-            touch       = 1'b1;
-            touch_way   = victim_way;
+            rp_fill     = 1'b1;
             resp_we     = 1'b1;
             resp_data_d = get_data(vc_data, cur_off);
             next_state  = RESP;
@@ -170,8 +191,7 @@ module simple_cache #(
           way_main    = victim_way;
           wdata_main  = m_data_i;
           vc_insert   = 1'b1;
-          touch       = 1'b1;
-          touch_way   = victim_way;
+          rp_fill     = 1'b1;
           resp_we     = 1'b1;
           resp_data_d = get_data(m_data_i, cur_off);
           next_state  = RESP;
@@ -193,12 +213,12 @@ module simple_cache #(
       resp_data_q <= '0;
     end else begin
       state <= next_state;
-      if (state == IDLE && c_req_i && !hit) addr_q <= c_addr_i;
-      if (resp_we)                          resp_data_q <= resp_data_d;
+      if (state == IDLE && c_req_i) addr_q <= c_addr_i;
+      if (resp_we)                  resp_data_q <= resp_data_d;
     end
   end
 
-  assign c_gnt_o  = comb_hit || (state == RESP);
-  assign c_data_o = comb_hit ? get_data(hit_data, cur_off) : resp_data_q;
+  assign c_gnt_o  = (state == RESP);
+  assign c_data_o = resp_data_q;
 
 endmodule
