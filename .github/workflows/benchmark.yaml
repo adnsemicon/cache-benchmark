@@ -18,13 +18,7 @@ jobs:
       
       - name: Build and Run Simulation
         run: |
-          VIVADO_SETTINGS=$(find / -name settings64.sh 2>/dev/null | head -n 1)
-          if [ -z "$VIVADO_SETTINGS" ]; then
-            echo "Error: Vivado settings64.sh file not found!"
-            exit 1
-          fi
-          echo "Found Vivado at: $VIVADO_SETTINGS"
-          source $VIVADO_SETTINGS
+          source /tools/Xilinx/Vivado/2024.2/settings64.sh
 
           rm -rf build
           mkdir build
