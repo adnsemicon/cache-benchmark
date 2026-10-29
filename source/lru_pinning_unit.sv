@@ -6,36 +6,32 @@ module lru_pinning_unit #(
   input  logic                               arst_ni,
 
   input  logic [$clog2(SETS)-1:0]            index_i,
-  input  logic                               touch_i,      // a way of this set was used
+  input  logic                               touch_i,
   input  logic [(NW>1 ? $clog2(NW) : 1)-1:0] touch_way_i,
-  input  logic [NW-1:0]                      valid_i,      // valid bits of the selected set
+  input  logic [NW-1:0]                      valid_i,
 
   output logic [(NW>1 ? $clog2(NW) : 1)-1:0] victim_way_o
 );
 
   localparam int WB = (NW > 1) ? $clog2(NW) : 1;
 
-  // rank[s][w] : 0 = least recently used ... NW-1 = most recently used
   logic [WB-1:0] rank [SETS][NW];
   logic          found;
 
   always_comb begin
     victim_way_o = '0;
     found        = 1'b0;
-    
     for (int w = 0; w < NW; w++) begin
       if (!valid_i[w] && !found) begin
         victim_way_o = WB'(w);
         found        = 1'b1;
       end
     end
-    
-    // ২. খালি স্লট না থাকলে, নিখুঁতভাবে Least Recently Used (rank == 0) ওয়ে খুঁজে বের করা
     if (!found) begin
       for (int w = 0; w < NW; w++) begin
         if ((rank[index_i][w] == '0) && !found) begin
           victim_way_o = WB'(w);
-          found        = 1'b1; // প্রথম এলআরইউ ওয়ে পাওয়ার সাথে সাথে লক করে দেওয়া
+          found        = 1'b1;
         end
       end
     end

@@ -1,20 +1,16 @@
 module victim_cache #(
   parameter int VC_SIZE = 8,
-  parameter int LINE_AW = 12,   // AW - OFFSET_BITS
+  parameter int LINE_AW = 12,
   parameter int M_DW    = 128
 )(
   input  logic                         clk_i,
   input  logic                         arst_ni,
-
-  input  logic [LINE_AW-1:0]           line_addr_i,   // address being looked up
-
+  input  logic [LINE_AW-1:0]           line_addr_i,
   input  logic                         promote_i,
-
   input  logic                         insert_i,
   input  logic                         evict_valid_i,
   input  logic [LINE_AW-1:0]           evict_addr_i,
   input  logic [M_DW-1:0]              evict_data_i,
-
   output logic                         hit_o,
   output logic [M_DW-1:0]              data_o
 );
