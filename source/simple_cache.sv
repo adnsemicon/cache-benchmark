@@ -4,7 +4,7 @@ module simple_cache #(
   parameter int M_DW    = 128,
   parameter int CL      = 256,
   parameter int NW      = 4,
-  parameter int VC_SIZE = 64,
+  parameter int VC_SIZE = 8,
 `ifdef USE_DRRIP
   parameter int REPL    = 1     // DRRIP (compile with -d USE_DRRIP)
 `else
