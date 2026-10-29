@@ -23,22 +23,23 @@ module lru_pinning_unit
 
   // Find victim (lowest age among unlocked)
   always_comb begin
-    victim_way_o = 0;
-    automatic logic [1:0] min_age = 2'b11;
+    logic [1:0] min_age;
+    victim_way_o = 2'b00;
+    min_age      = 2'b11;
 
     for (int w = 0; w < NW; w++) begin
       lock_o[w] = lines_i[w].lock;
 
       if (!lines_i[w].lock) begin
         if (age[index_i][w] <= min_age) begin
-          min_age = age[index_i][w];
+          min_age      = age[index_i][w];
           victim_way_o = w[1:0];
         end
       end
     end
   end
 
-  // Update age + frequency + lock
+  // Update age
   always_ff @(posedge clk_i or negedge arst_ni) begin
     if (!arst_ni) begin
       for (int s = 0; s < SETS; s++)
@@ -47,7 +48,6 @@ module lru_pinning_unit
     end
     else begin
       if (hit_i) begin
-        // Make hit way MRU
         for (int w = 0; w < NW; w++) begin
           if (w[1:0] == hit_way_i)
             age[index_i][w] <= 2'b11;
