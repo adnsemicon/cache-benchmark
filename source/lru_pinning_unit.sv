@@ -22,16 +22,21 @@ module lru_pinning_unit #(
   always_comb begin
     victim_way_o = '0;
     found        = 1'b0;
+    
     for (int w = 0; w < NW; w++) begin
       if (!valid_i[w] && !found) begin
         victim_way_o = WB'(w);
         found        = 1'b1;
       end
     end
+    
+    // ২. খালি স্লট না থাকলে, নিখুঁতভাবে Least Recently Used (rank == 0) ওয়ে খুঁজে বের করা
     if (!found) begin
       for (int w = 0; w < NW; w++) begin
-        if (rank[index_i][w] == '0)
+        if ((rank[index_i][w] == '0) && !found) begin
           victim_way_o = WB'(w);
+          found        = 1'b1; // প্রথম এলআরইউ ওয়ে পাওয়ার সাথে সাথে লক করে দেওয়া
+        end
       end
     end
   end
