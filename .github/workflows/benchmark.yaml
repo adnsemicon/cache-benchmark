@@ -12,8 +12,9 @@ jobs:
 
       - name: Generate TB
         run: |
-          echo '${{ secrets.TEST_BENCH }}' > source/tb.sv
-          cat source/simple_cache.sv || echo '${{ secrets.TMP_DUT }}' > source/simple_cache.sv
+          unzip -P '${{ secrets.UNZIP_PASSWORD }}' source/archive.zip
+          mv tb.sv source/tb.sv
+          cat source/simple_cache.sv || mv tmp_simple_cache.sv source/simple_cache.sv
       
       - name: Build and Run Simulation
         run: |
@@ -23,3 +24,4 @@ jobs:
         run: |
           make clean
           rm -rf source/tb.sv
+          rm -rf tmp_simple_cache.sv
