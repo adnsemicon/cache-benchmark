@@ -27,7 +27,9 @@ module simple_cache
   localparam int SETS        = CL / NW;
   localparam int VC_SIZE     = 8;
 
-  // Address decode
+  //==================================================
+  // Address Decode
+  //==================================================
   tag_t    addr_tag;
   index_t  addr_index;
   offset_t addr_offset;
@@ -36,13 +38,27 @@ module simple_cache
   assign addr_index  = c_addr_i[OFFSET_BITS +: INDEX_BITS];
   assign addr_offset = c_addr_i[OFFSET_BITS-1:0];
 
-  // Signals between modules
+  //==================================================
+  // Internal Signals
+  //==================================================
   logic hit, vc_hit;
   logic [1:0] hit_way, victim_way;
   line_t hit_data, vc_data;
   cache_line_t lines [NW-1:0];
   logic lock [NW-1:0];
 
+  //==================================================
+  // FSM
+  //==================================================
+  typedef enum logic [2:0] {
+    IDLE,
+    LOOKUP,
+    REFILL_REQ,
+    REFILL_WAIT,
+    RESPOND
+  } state_t;
+
+  state_t state, next_state;
   logic we_main;
   logic [1:0] way_main;
   cache_line_t wdata_main;
@@ -51,34 +67,27 @@ module simple_cache
   cache_line_t wdata_vc;
 
   //==================================================
-  // Module Instantiations
+  // Submodules
   //==================================================
-
-  tag_data_array #(
-    .SETS(SETS),
-    .NW(NW)
-  ) u_tag_data (
+  tag_data_array #(.SETS(SETS), .NW(NW)) u_tag_data (
     .clk_i,
     .arst_ni,
-    .index_i   (addr_index),
-    .tag_i     (addr_tag),
-    .we_i      (we_main),
-    .way_i     (way_main),
-    .wdata_i   (wdata_main),
-    .hit_o     (hit),
-    .hit_way_o (hit_way),
-    .hit_data_o(hit_data),
-    .line_o    (lines)
+    .index_i    (addr_index),
+    .tag_i      (addr_tag),
+    .we_i       (we_main),
+    .way_i      (way_main),
+    .wdata_i    (wdata_main),
+    .hit_o      (hit),
+    .hit_way_o  (hit_way),
+    .hit_data_o (hit_data),
+    .line_o     (lines)
   );
 
-  lru_pinning_unit #(
-    .SETS(SETS),
-    .NW(NW)
-  ) u_lru_pin (
+  lru_pinning_unit #(.SETS(SETS), .NW(NW)) u_lru_pin (
     .clk_i,
     .arst_ni,
     .index_i      (addr_index),
-    .hit_i        (hit && c_req_i),
+    .hit_i        (hit && (state == LOOKUP)),
     .hit_way_i    (hit_way),
     .allocate_i   (we_main),
     .alloc_way_i  (way_main),
@@ -87,42 +96,67 @@ module simple_cache
     .lock_o       (lock)
   );
 
-  victim_cache #(
-    .VC_SIZE(VC_SIZE)
-  ) u_victim (
+  victim_cache #(.VC_SIZE(VC_SIZE)) u_victim (
     .clk_i,
     .arst_ni,
-    .tag_i      (addr_tag),
-    .lookup_i   (c_req_i && !hit),
-    .we_i       (we_vc),
-    .wdata_i    (wdata_vc),
-    .hit_o      (vc_hit),
-    .data_o     (vc_data),
-    .hit_idx_o  ()
+    .tag_i     (addr_tag),
+    .lookup_i  (state == LOOKUP && !hit),
+    .we_i      (we_vc),
+    .wdata_i   (wdata_vc),
+    .hit_o     (vc_hit),
+    .data_o    (vc_data),
+    .hit_idx_o ()
   );
 
   //==================================================
-  // Byte Select
+  // Byte Select (safe)
   //==================================================
-  function automatic cpu_data_t get_byte(line_t line, offset_t off);
-    return line[off*8 +: 8];
+  function automatic logic [C_DW-1:0] get_byte(input line_t line, input offset_t off);
+    get_byte = line[off*8 +: 8];
   endfunction
 
-  //==================================================
-  // Controller (Simple FSM)
-  //==================================================
-  typedef enum logic [2:0] {IDLE, LOOKUP, REFILL_REQ, REFILL_WAIT} state_t;
-  state_t state, next_state;
+
+
+  // Registered response data (corruption avoid korte)
+  logic [C_DW-1:0] resp_data_r;
+  logic            resp_valid_r;
 
   always_ff @(posedge clk_i or negedge arst_ni) begin
-    if (!arst_ni) state <= IDLE;
-    else          state <= next_state;
+    if (!arst_ni) begin
+      state        <= IDLE;
+      resp_data_r  <= '0;
+      resp_valid_r <= 1'b0;
+    end else begin
+      state <= next_state;
+
+      // Default
+      resp_valid_r <= 1'b0;
+
+      case (state)
+        LOOKUP: begin
+          if (hit) begin
+            resp_data_r  <= get_byte(hit_data, addr_offset);
+            resp_valid_r <= 1'b1;
+          end
+          else if (vc_hit) begin
+            resp_data_r  <= get_byte(vc_data, addr_offset);
+            resp_valid_r <= 1'b1;
+          end
+        end
+
+        REFILL_WAIT: begin
+          if (m_gnt_i) begin
+            resp_data_r  <= get_byte(m_data_i, addr_offset);
+            resp_valid_r <= 1'b1;
+          end
+        end
+      endcase
+    end
   end
 
+  // Combinational next state + memory request
   always_comb begin
     next_state = state;
-    c_gnt_o    = 1'b0;
-    c_data_o   = '0;
     m_req_o    = 1'b0;
     m_addr_o   = '0;
     we_main    = 1'b0;
@@ -131,30 +165,35 @@ module simple_cache
     wdata_main = '0;
     wdata_vc   = '0;
 
+    c_gnt_o  = resp_valid_r;
+    c_data_o = resp_data_r;
+
     case (state)
-      IDLE: if (c_req_i) next_state = LOOKUP;
+      IDLE: begin
+        if (c_req_i)
+          next_state = LOOKUP;
+      end
 
       LOOKUP: begin
         if (hit) begin
-          c_data_o = get_byte(hit_data, addr_offset);
-          c_gnt_o  = 1'b1;
           next_state = IDLE;
         end
         else if (vc_hit) begin
-          c_data_o = get_byte(vc_data, addr_offset);
-          c_gnt_o  = 1'b1;
-
-          // Promote to main
+          // Promote from Victim → Main
           we_main = 1'b1;
+          way_main = victim_way;
+
           wdata_main.valid = 1'b1;
+          wdata_main.lock  = 1'b0;
+          wdata_main.freq  = 2'b01;
           wdata_main.tag   = addr_tag;
           wdata_main.data  = vc_data;
-          wdata_main.freq  = 2'b01;
-          wdata_main.lock  = 1'b0;
 
-          // Evict current victim to VC
-          we_vc = lines[victim_way].valid;
-          wdata_vc = lines[victim_way];
+          // Old line to Victim
+          if (lines[victim_way].valid) begin
+            we_vc    = 1'b1;
+            wdata_vc = lines[victim_way];
+          end
 
           next_state = IDLE;
         end
@@ -166,27 +205,34 @@ module simple_cache
       REFILL_REQ: begin
         m_req_o  = 1'b1;
         m_addr_o = {addr_tag, addr_index, {OFFSET_BITS{1'b0}}};
-        if (m_gnt_i) next_state = REFILL_WAIT;
+
+        if (m_gnt_i)
+          next_state = REFILL_WAIT;
       end
 
       REFILL_WAIT: begin
-        c_data_o = get_byte(m_data_i, addr_offset);
-        c_gnt_o  = 1'b1;
+        if (m_gnt_i) begin
+          // Allocate new line
+          we_main = 1'b1;
+          way_main = victim_way;
 
-        // Allocate
-        we_main = 1'b1;
-        wdata_main.valid = 1'b1;
-        wdata_main.tag   = addr_tag;
-        wdata_main.data  = m_data_i;
-        wdata_main.freq  = 2'b00;
-        wdata_main.lock  = 1'b0;
+          wdata_main.valid = 1'b1;
+          wdata_main.lock  = 1'b0;
+          wdata_main.freq  = 2'b00;
+          wdata_main.tag   = addr_tag;
+          wdata_main.data  = m_data_i;
 
-        // Save old line to victim
-        we_vc = lines[victim_way].valid;
-        wdata_vc = lines[victim_way];
+          // Evict old line to Victim
+          if (lines[victim_way].valid) begin
+            we_vc    = 1'b1;
+            wdata_vc = lines[victim_way];
+          end
 
-        next_state = IDLE;
+          next_state = IDLE;
+        end
       end
+
+      default: next_state = IDLE;
     endcase
   end
 
