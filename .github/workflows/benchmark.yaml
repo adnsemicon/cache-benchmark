@@ -18,10 +18,15 @@ jobs:
       
       - name: Build and Run Simulation
         run: |
-          make all
+          rm -rf build
+          mkdir build
+          cd build
+          xvlog -sv ../source/*.sv
+          xelab tb -s tb -debug all
+          xsim tb -runall
 
       - name: Clean up
         run: |
-          make clean
+          rm -rf build
           rm -rf source/tb.sv
           rm -rf tmp_simple_cache.sv
