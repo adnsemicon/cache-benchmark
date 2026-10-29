@@ -2,13 +2,13 @@ module simple_cache #(
   parameter int AW      = 16,
   parameter int C_DW    = 8,
   parameter int M_DW    = 128,
-  parameter int CL      = 512,
+  parameter int CL      = 256,
   parameter int NW      = 4,
-  parameter int VC_SIZE = 16,
+  parameter int VC_SIZE = 64,
 `ifdef USE_DRRIP
   parameter int REPL    = 2     // DRRIP (compile with -d USE_DRRIP)
 `else
-  parameter int REPL    = 1     // 0: true LRU (default), 1: DRRIP
+  parameter int REPL    = 1    // 0: true LRU, 1: DRRIP, 2: PLRU (default)
 `endif
 )(
   input  logic             arst_ni,
@@ -36,7 +36,7 @@ module simple_cache #(
   // FSM
   //   IDLE   : request accepted, tag + victim cache looked up in the same cycle
   //   REFILL : m_req_o held high until m_gnt_i (m_gnt_i == m_data_i valid)
-  //   RESP   : c_gnt_o / c_data_o valid for exactly one cycle
+  //   RESP   : c_gnt_o / c_data_o valid for refill response
   //==================================================
   typedef enum logic [1:0] { IDLE, REFILL, RESP } state_t;
   state_t state, next_state;
@@ -139,8 +139,12 @@ module simple_cache #(
   );
 
   //==================================================
-  // Control
+  // Control & Single-Cycle Hit Response
   //==================================================
+  logic comb_hit, comb_vc_hit;
+  assign comb_hit    = (state == IDLE) && c_req_i && hit;
+  assign comb_vc_hit = (state == IDLE) && c_req_i && !hit && vc_hit;
+
   logic [C_DW-1:0] resp_data_q, resp_data_d;
   logic            resp_we;
 
@@ -163,20 +167,15 @@ module simple_cache #(
       IDLE: begin
         if (c_req_i) begin
           if (hit) begin
-            resp_we     = 1'b1;
-            resp_data_d = get_data(hit_data, cur_off);
             rp_hit      = 1'b1;
-            next_state  = RESP;
+            next_state  = IDLE; // Zero-cycle hit, stay in IDLE
           end else if (vc_hit) begin
-            // promote victim-cache line into the main cache, swap evicted line into VC
             we_main     = 1'b1;
             way_main    = victim_way;
             wdata_main  = vc_data;
             vc_promote  = 1'b1;
             rp_fill     = 1'b1;
-            resp_we     = 1'b1;
-            resp_data_d = get_data(vc_data, cur_off);
-            next_state  = RESP;
+            next_state  = IDLE; // Zero-cycle victim hit, stay in IDLE
           end else begin
             next_state  = REFILL;
           end
@@ -218,7 +217,9 @@ module simple_cache #(
     end
   end
 
-  assign c_gnt_o  = (state == RESP);
-  assign c_data_o = resp_data_q;
+  // Combinational grant and data for zero-latency hits
+  assign c_gnt_o  = comb_hit || comb_vc_hit || (state == RESP);
+  assign c_data_o = comb_hit    ? get_data(hit_data, cur_off) :
+                    comb_vc_hit ? get_data(vc_data, cur_off)  : resp_data_q;
 
 endmodule
