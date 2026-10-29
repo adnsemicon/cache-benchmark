@@ -1,0 +1,25 @@
+name: benchmark
+
+on: [push]
+
+jobs:
+  benchmark:
+    runs-on: [adn]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Generate TB
+        run: |
+          echo '${{ secrets.TEST_BENCH }}' > source/tb.sv
+          cat source/simple_cache.sv || echo '${{ secrets.TMP_DUT }}' > source/simple_cache.sv
+      
+      - name: Build and Run Simulation
+        run: |
+          make all
+
+      - name: Clean up
+        run: |
+          make clean
+          rm -rf source/tb.sv
