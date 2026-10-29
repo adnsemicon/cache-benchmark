@@ -4,11 +4,11 @@ module simple_cache #(
   parameter int M_DW    = 128,
   parameter int CL      = 256,
   parameter int NW      = 4,
-  parameter int VC_SIZE = 64,
+  parameter int VC_SIZE = 16,
 `ifdef USE_DRRIP
   parameter int REPL    = 2     // DRRIP (compile with -d USE_DRRIP)
 `else
-  parameter int REPL    = 1    // 0: true LRU, 1: DRRIP, 2: PLRU (default)
+  parameter int REPL    = 1     // 0: true LRU, 1: DRRIP, 2: PLRU (default)
 `endif
 )(
   input  logic             arst_ni,
@@ -34,15 +34,12 @@ module simple_cache #(
 
   //==================================================
   // FSM
-  //   IDLE   : request accepted, tag + victim cache looked up in the same cycle
-  //   REFILL : m_req_o held high until m_gnt_i (m_gnt_i == m_data_i valid)
-  //   RESP   : c_gnt_o / c_data_o valid for refill response
   //==================================================
   typedef enum logic [1:0] { IDLE, REFILL, RESP } state_t;
   state_t state, next_state;
 
   //==================================================
-  // Address: latched on accept, so the whole transaction uses ONE address
+  // Address Slicing
   //==================================================
   logic [AW-1:0] addr_q;
   logic [AW-1:0] cur_addr;
@@ -60,14 +57,14 @@ module simple_cache #(
   assign cur_line_addr = cur_addr[AW-1:OFFSET_BITS];
 
   //==================================================
-  // Single byte-select function (hit / victim-hit / refill all use it)
+  // Single Byte-Select Function
   //==================================================
   function automatic logic [C_DW-1:0] get_data(
     input logic [M_DW-1:0]        line,
     input logic [OFFSET_BITS-1:0] off
   );
     logic [M_DW+C_DW-1:0] ext;
-    ext      = {{C_DW{1'b0}}, line};          // zero-pad: never reads outside the line
+    ext      = {{C_DW{1'b0}}, line};
     get_data = ext[int'(off)*8 +: C_DW];
   endfunction
 
@@ -87,10 +84,8 @@ module simple_cache #(
   logic [M_DW-1:0]      wdata_main;
 
   logic                 rp_hit, rp_fill;
-
   logic                 vc_promote, vc_insert;
 
-  // line being pushed out of the main cache (only meaningful if set_valid[victim_way])
   logic                 evict_valid;
   logic [LINE_AW-1:0]   evict_addr;
   logic [M_DW-1:0]      evict_data;
@@ -139,12 +134,8 @@ module simple_cache #(
   );
 
   //==================================================
-  // Control & Single-Cycle Hit Response
+  // Control Logic
   //==================================================
-  logic comb_hit, comb_vc_hit;
-  assign comb_hit    = (state == IDLE) && c_req_i && hit;
-  assign comb_vc_hit = (state == IDLE) && c_req_i && !hit && vc_hit;
-
   logic [C_DW-1:0] resp_data_q, resp_data_d;
   logic            resp_we;
 
@@ -167,15 +158,19 @@ module simple_cache #(
       IDLE: begin
         if (c_req_i) begin
           if (hit) begin
+            resp_we     = 1'b1;
+            resp_data_d = get_data(hit_data, cur_off);
             rp_hit      = 1'b1;
-            next_state  = IDLE; // Zero-cycle hit, stay in IDLE
+            next_state  = RESP;
           end else if (vc_hit) begin
             we_main     = 1'b1;
             way_main    = victim_way;
             wdata_main  = vc_data;
             vc_promote  = 1'b1;
             rp_fill     = 1'b1;
-            next_state  = IDLE; // Zero-cycle victim hit, stay in IDLE
+            resp_we     = 1'b1;
+            resp_data_d = get_data(vc_data, cur_off);
+            next_state  = RESP;
           end else begin
             next_state  = REFILL;
           end
@@ -217,9 +212,32 @@ module simple_cache #(
     end
   end
 
-  // Combinational grant and data for zero-latency hits
-  assign c_gnt_o  = comb_hit || comb_vc_hit || (state == RESP);
-  assign c_data_o = comb_hit    ? get_data(hit_data, cur_off) :
-                    comb_vc_hit ? get_data(vc_data, cur_off)  : resp_data_q;
+  assign c_gnt_o  = (state == RESP);
+  assign c_data_o = resp_data_q;
+
+  //==================================================
+  // Remote Debug Logs ($display)
+  //==================================================
+  always_ff @(posedge clk_i) begin
+    if (arst_ni) begin
+      if (state == IDLE && c_req_i) begin
+        if (hit) begin
+          $display("[CACHE_DBG] T=%0t | HIT | Addr=0x%0h (Tag=0x%0h, Idx=0x%0h, Way=%0d)",
+                   $time, c_addr_i, cur_tag, cur_index, hit_way);
+        end else if (vc_hit) begin
+          $display("[CACHE_DBG] T=%0t | VC_HIT | Addr=0x%0h (Promoting VC line to Main Cache)",
+                   $time, c_addr_i);
+        end else begin
+          $display("[CACHE_DBG] T=%0t | MISS | Addr=0x%0h -> Triggering REFILL",
+                   $time, c_addr_i);
+        end
+      end
+
+      if (state == REFILL && m_gnt_i) begin
+        $display("[CACHE_DBG] T=%0t | REFILL_DONE | Addr=0x%0h placed in Way=%0d",
+                 $time, cur_addr, victim_way);
+      end
+    end
+  end
 
 endmodule
