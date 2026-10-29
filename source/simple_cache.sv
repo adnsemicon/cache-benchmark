@@ -119,11 +119,8 @@ module simple_cache #(
   logic [C_DW-1:0] resp_data_q, resp_data_d;
   logic            resp_we;
   logic            comb_hit;
-  logic            vc_comb_hit; // ডিক্লেয়েশন উপরে নিয়ে আসা হলো
 
-  // Single-cycle combinational hit detection when in IDLE
-  assign comb_hit    = (state == IDLE) && c_req_i && hit;
-  assign vc_comb_hit = (state == IDLE) && c_req_i && !hit && vc_hit;
+  assign comb_hit = (state == IDLE) && c_req_i && hit;
 
   always_comb begin
     next_state  = state;
@@ -148,7 +145,7 @@ module simple_cache #(
             resp_data_d = get_data(hit_data, cur_off);
             touch       = 1'b1;
             touch_way   = hit_way;
-            next_state  = IDLE; 
+            next_state  = IDLE;
           end else if (vc_hit) begin
             we_main     = 1'b1;
             way_main    = victim_way;

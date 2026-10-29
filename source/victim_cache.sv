@@ -23,53 +23,54 @@ module victim_cache #(
   logic [PB-1:0]       wr_ptr;
 
   logic [PB-1:0]       hit_idx;
-  logic [PB-1:0]       ins_idx;
-  logic                ins_free;
+  logic                hit_found;
 
+  // Combinational Hit Search & Captured Data
   always_comb begin
-    hit_o   = 1'b0;
-    data_o  = '0;
-    hit_idx = '0;
-    for (int i = 0; i < VC_SIZE; i++) begin
-      if (valid_q[i] && addr_q[i] == line_addr_i) begin
-        hit_o   = 1'b1;
-        data_o  = data_q[i];
-        hit_idx = PB'(i);
-      end
-    end
+    hit_o     = 1'b0;
+    data_o    = '0;
+    hit_idx   = '0;
+    hit_found = 1'b0;
 
-    ins_idx  = wr_ptr;
-    ins_free = 1'b0;
     for (int i = 0; i < VC_SIZE; i++) begin
-      if (!valid_q[i] && !ins_free) begin
-        ins_idx  = PB'(i);
-        ins_free = 1'b1;
+      if (valid_q[i] && (addr_q[i] == line_addr_i)) begin
+        hit_o     = 1'b1;
+        data_o    = data_q[i];
+        hit_idx   = PB'(i);
+        hit_found = 1'b1;
       end
     end
   end
 
+  // Sequential Update for Victim Cache Entries & Swap
   always_ff @(posedge clk_i or negedge arst_ni) begin
     if (!arst_ni) begin
       valid_q <= '0;
       wr_ptr  <= '0;
+      for (int i = 0; i < VC_SIZE; i++) begin
+        addr_q[i] <= '0;
+        data_q[i] <= '0;
+      end
     end else begin
       if (promote_i) begin
-        valid_q[hit_idx] <= evict_valid_i;
-      end else if (insert_i && evict_valid_i) begin
-        valid_q[ins_idx] <= 1'b1;
-        if (!ins_free)
-          wr_ptr <= (wr_ptr == PB'(VC_SIZE-1)) ? '0 : wr_ptr + 1'b1;
+        // When promoted, the hit entry takes the new evicted line from main cache,
+        // and the old hit line is returned to the main cache.
+        if (evict_valid_i) begin
+          addr_q[hit_idx] <= evict_addr_i;
+          data_q[hit_idx] <= evict_data_i;
+          valid_q[hit_idx] <= 1'b1;
+        end else begin
+          valid_q[hit_idx] <= 1'b0;
+        end
+      end else if (insert_i) begin
+        // Standard eviction insertion into victim cache (FIFO replacement)
+        if (evict_valid_i) begin
+          addr_q[wr_ptr] <= evict_addr_i;
+          data_q[wr_ptr] <= evict_data_i;
+          valid_q[wr_ptr] <= 1'b1;
+          wr_ptr          <= (wr_ptr == PB'(VC_SIZE-1)) ? '0 : wr_ptr + 1'b1;
+        end
       end
-    end
-  end
-
-  always_ff @(posedge clk_i) begin
-    if (promote_i) begin
-      addr_q[hit_idx] <= evict_addr_i;
-      data_q[hit_idx] <= evict_data_i;
-    end else if (insert_i && evict_valid_i) begin
-      addr_q[ins_idx] <= evict_addr_i;
-      data_q[ins_idx] <= evict_data_i;
     end
   end
 
