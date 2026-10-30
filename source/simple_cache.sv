@@ -178,7 +178,7 @@ module simple_cache #(
       end
 
       REFILL: begin
-        m_req_o  = 1'b1;
+        m_req_o  = 1 me_main;
         m_addr_o = {cur_line_addr, {OFFSET_BITS{1'b0}}};
         if (m_gnt_i) begin
           we_main     = 1'b1;
@@ -216,26 +216,23 @@ module simple_cache #(
   assign c_data_o = resp_data_q;
 
   //==================================================
-  // Remote Debug Logs ($display)
+  // Limited Remote Debug Logs (Max 30 prints)
   //==================================================
+  int dbg_cnt = 0;
+
   always_ff @(posedge clk_i) begin
-    if (arst_ni) begin
+    if (arst_ni && dbg_cnt < 30) begin
       if (state == IDLE && c_req_i) begin
         if (hit) begin
-          $display("[CACHE_DBG] T=%0t | HIT | Addr=0x%0h (Tag=0x%0h, Idx=0x%0h, Way=%0d)",
-                   $time, c_addr_i, cur_tag, cur_index, hit_way);
+          $display("[DBG %0d] T=%0t | HIT | Addr=0x%0h (Tag=0x%0h, Idx=0x%0h)", dbg_cnt, $time, c_addr_i, cur_tag, cur_index);
+          dbg_cnt <= dbg_cnt + 1;
         end else if (vc_hit) begin
-          $display("[CACHE_DBG] T=%0t | VC_HIT | Addr=0x%0h (Promoting VC line to Main Cache)",
-                   $time, c_addr_i);
+          $display("[DBG %0d] T=%0t | VC_HIT | Addr=0x%0h", dbg_cnt, $time, c_addr_i);
+          dbg_cnt <= dbg_cnt + 1;
         end else begin
-          $display("[CACHE_DBG] T=%0t | MISS | Addr=0x%0h -> Triggering REFILL",
-                   $time, c_addr_i);
+          $display("[DBG %0d] T=%0t | MISS | Addr=0x%0h -> REFILL", dbg_cnt, $time, c_addr_i);
+          dbg_cnt <= dbg_cnt + 1;
         end
-      end
-
-      if (state == REFILL && m_gnt_i) begin
-        $display("[CACHE_DBG] T=%0t | REFILL_DONE | Addr=0x%0h placed in Way=%0d",
-                 $time, cur_addr, victim_way);
       end
     end
   end
