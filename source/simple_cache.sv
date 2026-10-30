@@ -4,11 +4,11 @@ module simple_cache #(
   parameter int M_DW    = 128,
   parameter int CL      = 256,
   parameter int NW      = 4,
-  parameter int VC_SIZE = 64,
+  parameter int VC_SIZE = 16,
 `ifdef USE_DRRIP
-  parameter int REPL    = 1     // DRRIP (compile with -d USE_DRRIP)
+  parameter int REPL    = 2     // DRRIP (compile with -d USE_DRRIP)
 `else
-  parameter int REPL    = 2     // 0: true LRU, 1: DRRIP, 2: PLRU (default)
+  parameter int REPL    = 1     // 0: true LRU, 1: DRRIP, 2: PLRU (default)
 `endif
 )(
   input  logic             arst_ni,
@@ -223,25 +223,35 @@ module simple_cache #(
   assign c_data_o = resp_data_q;
 
   //==================================================
-  // Limited Remote Debug Logs (Max 30 prints)
+  // Request logger (for analysing the hidden TB from the CI log)
+  //   TRC <addr_hex> <H|V|M>   one line per CPU request (H=main hit, V=victim-cache hit, M=miss)
+  //   CNT n=<req> hit=<h> vc=<v> miss=<m>   every 1000 requests and at the end
+  //   Set DBG_MAX = 0 before the final submission to silence it.
   //==================================================
-  int dbg_cnt = 0;
+  localparam int DBG_MAX = 8000;
+
+  int unsigned n_req = 0, n_hit = 0, n_vc = 0, n_miss = 0;
 
   always_ff @(posedge clk_i) begin
-    if (arst_ni && dbg_cnt < 30) begin
-      if (state == IDLE && c_req_i) begin
-        if (hit) begin
-          $display("[DBG %0d] T=%0t | HIT | Addr=0x%0h (Tag=0x%0h, Idx=0x%0h)", dbg_cnt, $time, c_addr_i, cur_tag, cur_index);
-          dbg_cnt <= dbg_cnt + 1;
-        end else if (vc_hit) begin
-          $display("[DBG %0d] T=%0t | VC_HIT | Addr=0x%0h", dbg_cnt, $time, c_addr_i);
-          dbg_cnt <= dbg_cnt + 1;
-        end else begin
-          $display("[DBG %0d] T=%0t | MISS | Addr=0x%0h -> REFILL", dbg_cnt, $time, c_addr_i);
-          dbg_cnt <= dbg_cnt + 1;
-        end
-      end
+    if (arst_ni && state == IDLE && c_req_i) begin
+      n_req <= n_req + 1;
+      if      (hit)    n_hit  <= n_hit  + 1;
+      else if (vc_hit) n_vc   <= n_vc   + 1;
+      else             n_miss <= n_miss + 1;
+
+      if (n_req < DBG_MAX)
+        $display("TRC %0h %s", c_addr_i, hit ? "H" : (vc_hit ? "V" : "M"));
+      if (DBG_MAX != 0 && ((n_req + 1) % 1000 == 0))
+        $display("CNT n=%0d hit=%0d vc=%0d miss=%0d", n_req + 1,
+                 n_hit  + (hit ? 1 : 0),
+                 n_vc   + ((!hit && vc_hit) ? 1 : 0),
+                 n_miss + ((!hit && !vc_hit) ? 1 : 0));
     end
+  end
+
+  final begin
+    if (DBG_MAX != 0)
+      $display("CNT n=%0d hit=%0d vc=%0d miss=%0d  (FINAL)", n_req, n_hit, n_vc, n_miss);
   end
 
 endmodule
