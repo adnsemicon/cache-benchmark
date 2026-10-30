@@ -39,11 +39,19 @@ module simple_cache #(
   state_t state, next_state;
 
   //==================================================
-  // Address Slicing
+  // Address Slicing (Fixed with addr_q)
   //==================================================
   logic [AW-1:0] addr_q;
-  logic [AW-1:0] cur_addr;
+  
+  always_ff @(posedge clk_i or negedge arst_ni) begin
+    if (!arst_ni) begin
+      addr_q <= '0;
+    end else if (state == IDLE && c_req_i) begin
+      addr_q <= c_addr_i;
+    end
+  end
 
+  logic [AW-1:0]          cur_addr;
   assign cur_addr = (state == IDLE) ? c_addr_i : addr_q;
 
   logic [TAG_BITS-1:0]    cur_tag;
@@ -178,8 +186,9 @@ module simple_cache #(
       end
 
       REFILL: begin
-        m_req_o  = 1'b1; // Fixed typo here
-        m_addr_o = {cur_line_addr, {OFFSET_BITS{1'b0}}};
+        m_req_o     = 1'b1;
+        m_addr_o    = {cur_line_addr, {OFFSET_BITS{1'b0}}};
+        wtag_main   = cur_tag;  // Ensure correct tag is written
         if (m_gnt_i) begin
           we_main     = 1'b1;
           way_main    = victim_way;
@@ -203,12 +212,10 @@ module simple_cache #(
   always_ff @(posedge clk_i or negedge arst_ni) begin
     if (!arst_ni) begin
       state       <= IDLE;
-      addr_q      <= '0;
       resp_data_q <= '0;
     end else begin
       state <= next_state;
-      if (state == IDLE && c_req_i) addr_q <= c_addr_i;
-      if (resp_we)                  resp_data_q <= resp_data_d;
+      if (resp_we) resp_data_q <= resp_data_d;
     end
   end
 
