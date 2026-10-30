@@ -6,9 +6,9 @@ module simple_cache #(
   parameter int NW      = 4,
   parameter int VC_SIZE = 16,
 `ifdef USE_DRRIP
-  parameter int REPL    = 2     // DRRIP (compile with -d USE_DRRIP)
+  parameter int REPL    = 1     // DRRIP (compile with -d USE_DRRIP)
 `else
-  parameter int REPL    = 1     // 0: true LRU, 1: DRRIP, 2: PLRU (default)
+  parameter int REPL    = 2     // 0: true LRU, 1: DRRIP, 2: PLRU (default)
 `endif
 )(
   input  logic             arst_ni,
