@@ -4,11 +4,11 @@ module simple_cache #(
   parameter int M_DW    = 128,
   parameter int CL      = 256,
   parameter int NW      = 4,
-  parameter int VC_SIZE = 16,
+  parameter int VC_SIZE = 64,
 `ifdef USE_DRRIP
-  parameter int REPL    = 2     // DRRIP (compile with -d USE_DRRIP)
+  parameter int REPL    = 1     // DRRIP (compile with -d USE_DRRIP)
 `else
-  parameter int REPL    = 1     // 0: true LRU, 1: DRRIP, 2: PLRU (default)
+  parameter int REPL    = 2     // 0: true LRU, 1: DRRIP, 2: PLRU (default)
 `endif
 )(
   input  logic             arst_ni,
@@ -178,7 +178,7 @@ module simple_cache #(
       end
 
       REFILL: begin
-        m_req_o  = 1 me_main;
+        m_req_o  = 1'b1; // Fixed typo here
         m_addr_o = {cur_line_addr, {OFFSET_BITS{1'b0}}};
         if (m_gnt_i) begin
           we_main     = 1'b1;
