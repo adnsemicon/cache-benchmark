@@ -21,7 +21,7 @@ jobs:
           rm -rf build
           mkdir build
           cd build
-          xvlog -sv ../source/*.sv
+          xvlog -sv -d USE_DRRIP ../source/*.sv
           xelab tb -s tb -debug all
           xsim tb -runall > ../ci_log.txt
 
