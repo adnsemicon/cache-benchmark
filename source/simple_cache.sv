@@ -8,7 +8,7 @@ module simple_cache #(
 `ifdef USE_DRRIP
   parameter int REPL    = 3     // DRRIP (compile with -d USE_DRRIP)
 `else
-  parameter int REPL    = 2     // 0: true LRU, 1: DRRIP, 2: PLRU (default), 3: BRRIP 
+  parameter int REPL    = 1     // 0: true LRU, 1: DRRIP, 2: PLRU (default), 3: BRRIP 
 `endif
 )(
   input  logic             arst_ni,
