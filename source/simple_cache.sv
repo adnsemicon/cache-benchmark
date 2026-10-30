@@ -228,7 +228,7 @@ module simple_cache #(
   //   CNT n=<req> hit=<h> vc=<v> miss=<m>   every 1000 requests and at the end
   //   Set DBG_MAX = 0 before the final submission to silence it.
   //==================================================
-  localparam int DBG_MAX = 8000;
+  localparam int DBG_MAX = 70000;
 
   int unsigned n_req = 0, n_hit = 0, n_vc = 0, n_miss = 0;
 
