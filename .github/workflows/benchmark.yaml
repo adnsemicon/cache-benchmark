@@ -24,6 +24,7 @@ jobs:
           xvlog -sv -d USE_DRRIP ../source/*.sv
           xelab tb -s tb -debug all
           xsim tb -runall > ../ci_log.txt
+          cat ../ci_log.txt
 
       - name: Upload Log Artifact
         uses: actions/upload-artifact@v4
