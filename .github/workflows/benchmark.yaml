@@ -23,7 +23,13 @@ jobs:
           cd build
           xvlog -sv -d USE_DRRIP ../source/*.sv
           xelab tb -s tb -debug all
-          xsim tb -runall
+          xsim tb -runall > ../ci_log.txt
+
+      - name: Upload Log Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-log
+          path: ci_log.txt
 
       - name: Clean up
         run: |
