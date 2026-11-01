@@ -174,11 +174,12 @@ module simple_cache_tb;
   end
 
   //----------------------------------------------------------------------------
-  // Reference model: SRRIP, independent of the DUT replacement state.
+  // Reference model: true LRU by timestamps.
   //----------------------------------------------------------------------------
   bit               mv  [NS][NW];
   logic [TAG_W-1:0] mt  [NS][NW];
-  logic [1:0]       model_rrpv [NS][NW];
+  longint           mts [NS][NW];
+  longint           tick = 0;
   bit               model_evicted;
 
   function automatic int set_of(input logic [AW-1:0] a);
@@ -191,20 +192,22 @@ module simple_cache_tb;
       for (int w = 0; w < NW; w++) begin
         mv[s][w] = 1'b0;
         mt[s][w] = '0;
-        model_rrpv[s][w] = 2'd3;
+        mts[s][w] = 0;
       end
   endtask
 
-  // Returns 1 on a predicted hit; updates SRRIP state and contents.
+  // Returns 1 on a predicted hit; updates recency and contents.
   function automatic bit model_access(input logic [AW-1:0] a);
-    int s, victim, max_rrpv, age_delta, aged_value;
+    int s, victim;
+    longint best;
     logic [TAG_W-1:0] t;
     s = set_of(a);
     t = a[AW-1 -: TAG_W];
+    tick++;
     model_evicted = 1'b0;
     for (int w = 0; w < NW; w++)
       if (mv[s][w] && mt[s][w] == t) begin
-        model_rrpv[s][w] = 2'd0;
+        mts[s][w] = tick;
         return 1'b1;
       end
     victim = -1;
@@ -212,22 +215,13 @@ module simple_cache_tb;
       if (!mv[s][w]) begin victim = w; break; end
     if (victim < 0) begin
       model_evicted = 1'b1;
-      max_rrpv = 0;
-      for (int w = 0; w < NW; w++)
-        if (int'(model_rrpv[s][w]) > max_rrpv) max_rrpv = int'(model_rrpv[s][w]);
-      victim = 0;
-      for (int w = 0; w < NW; w++) begin
-        if (int'(model_rrpv[s][w]) == max_rrpv) begin victim = w; break; end
-      end
-      age_delta = 3 - max_rrpv;
-      for (int w = 0; w < NW; w++) begin
-        aged_value = int'(model_rrpv[s][w]) + age_delta;
-        model_rrpv[s][w] = (aged_value > 3) ? 2'd3 : 2'(aged_value);
-      end
+      best = mts[s][0]; victim = 0;
+      for (int w = 1; w < NW; w++)
+        if (mts[s][w] < best) begin best = mts[s][w]; victim = w; end
     end
     mv[s][victim] = 1'b1;
     mt[s][victim] = t;
-    model_rrpv[s][victim] = 2'd2;
+    mts[s][victim] = tick;
     return 1'b0;
   endfunction
 

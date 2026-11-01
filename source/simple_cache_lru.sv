@@ -1,5 +1,11 @@
-// SRRIP replacement state for each set. The legacy module name is retained so
-// existing source lists continue to compile without changes.
+// -----------------------------------------------------------------------------
+// simple_cache_lru : true-LRU replacement state for every set.
+//
+//  - One age per way per set: 0 = most recently used, NW-1 = least recently used.
+//  - Ages are a permutation of 0..NW-1 (reset: way w has age w).
+//  - upd_i marks way_i most recently used.
+//  - Invalid ways are preferred before the least-recently-used valid way.
+// -----------------------------------------------------------------------------
 module simple_cache_lru #(
   parameter int NS = 64,
   parameter int NW = 4,
@@ -12,81 +18,43 @@ module simple_cache_lru #(
   input  logic [NW-1:0]     valid_i,
   input  logic              upd_i,
   input  logic [WAY_WD-1:0] way_i,
-  input  logic              miss_i,
-  input  logic              fill_i,
-  input  logic [IDX_WD-1:0] fill_index_i,
-  input  logic [WAY_WD-1:0] fill_way_i,
   output logic [WAY_WD-1:0] victim_o
 );
-  // RRPV 0 = near/immediate reuse, 3 = distant re-reference.
-  logic [NS-1:0][NW-1:0][1:0] rrpv_q;
-  logic                      recent_fill_q;
-  logic [IDX_WD-1:0]         recent_fill_index_q;
-  logic [WAY_WD-1:0]         recent_fill_way_q;
+  logic [NS-1:0][NW-1:0][WAY_WD-1:0] age_q;
 
-  always_comb begin : choose_victim
+  function automatic logic [NS-1:0][NW-1:0][WAY_WD-1:0] age_init();
+    logic [NS-1:0][NW-1:0][WAY_WD-1:0] r;
+    for (int s = 0; s < NS; s++)
+      for (int w = 0; w < NW; w++) r[s][w] = WAY_WD'(w);
+    return r;
+  endfunction
+  localparam logic [NS-1:0][NW-1:0][WAY_WD-1:0] AGE_RESET = age_init();
+
+  always_comb begin
     logic found_invalid;
-    logic [1:0] max_rrpv;
-
     found_invalid = 1'b0;
-    max_rrpv = '0;
     victim_o = '0;
-
-    // Fill the lowest numbered invalid way before replacing a valid line.
-    for (int w = 0; w < NW; w++) begin
-      if (!found_invalid && !valid_i[w]) begin
+    for (int w = NW - 1; w >= 0; w--) begin
+      if (!valid_i[w]) begin
         victim_o = WAY_WD'(w);
         found_invalid = 1'b1;
       end
     end
-
     if (!found_invalid) begin
       for (int w = 0; w < NW; w++)
-        if (rrpv_q[index_i][w] > max_rrpv) max_rrpv = rrpv_q[index_i][w];
-      for (int w = 0; w < NW; w++) begin
-        if (rrpv_q[index_i][w] == max_rrpv) begin
-          victim_o = WAY_WD'(w);
-          break;
-        end
-      end
+        if (age_q[index_i][w] == WAY_WD'(NW - 1)) victim_o = WAY_WD'(w);
     end
   end
 
-  always_ff @(posedge clk_i or negedge arst_ni) begin : update_rrpv
-    logic [1:0] max_rrpv;
-    logic [1:0] age_delta;
-    logic [2:0] aged_value;
-    logic       recent_fill_hit;
-
+  always_ff @(posedge clk_i or negedge arst_ni) begin
     if (!arst_ni) begin
-      rrpv_q               <= '1;
-      recent_fill_q        <= 1'b0;
-      recent_fill_index_q  <= '0;
-      recent_fill_way_q    <= '0;
-    end else if (fill_i) begin
-      // SRRIP inserts demand lines at RRPV 2.
-      rrpv_q[fill_index_i][fill_way_i] <= 2'd2;
-      recent_fill_q                   <= 1'b1;
-      recent_fill_index_q             <= fill_index_i;
-      recent_fill_way_q               <= fill_way_i;
-    end else if (miss_i && (&valid_i)) begin
-      // Age all ways by the minimum amount needed to make a victim eligible.
-      max_rrpv = '0;
-      for (int w = 0; w < NW; w++)
-        if (rrpv_q[index_i][w] > max_rrpv) max_rrpv = rrpv_q[index_i][w];
-      age_delta = 2'd3 - max_rrpv;
-      for (int w = 0; w < NW; w++) begin
-        aged_value = {1'b0, rrpv_q[index_i][w]} + {1'b0, age_delta};
-        rrpv_q[index_i][w] <= (aged_value > 3) ? 2'd3 : aged_value[1:0];
-      end
+      age_q <= AGE_RESET;
     end else if (upd_i) begin
-      // The grant following a refill completes the original miss. Preserve
-      // the insertion value instead of promoting the line as a later hit.
-      recent_fill_hit = recent_fill_q &&
-                        (index_i == recent_fill_index_q) &&
-                        (way_i == recent_fill_way_q);
-      if (!recent_fill_hit) rrpv_q[index_i][way_i] <= 2'd0;
-      recent_fill_q <= 1'b0;
+      for (int w = 0; w < NW; w++) begin
+        if (age_q[index_i][w] < age_q[index_i][way_i])
+          age_q[index_i][w] <= age_q[index_i][w] + 1'b1;
+      end
+      age_q[index_i][way_i] <= '0;
     end
   end
 endmodule
