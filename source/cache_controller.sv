@@ -68,6 +68,7 @@ module cache_controller #(
         if (m_gnt_i) begin
           fill_o      = 1'b1;
           fill_way_o  = victim_i;
+          bypass_o    = 1'b1;
           c_gnt_o     = 1'b1;
           touch_o     = 1'b1;
           touch_way_o = victim_i;

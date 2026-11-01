@@ -47,6 +47,7 @@ module simple_cache #(
   logic [WAY_W-1:0]  fill_way;
   logic              touch;
   logic [WAY_W-1:0]  touch_way;
+  logic [NW-1:0]     valid_vec;
 
   // Memory Address (Cache-line aligned)
   assign m_addr_o = {c_addr_i[AW-1 : OFFSET_W], {OFFSET_W{1'b0}}};
@@ -62,7 +63,8 @@ module simple_cache #(
     .fill_i(fill),
     .fill_way_i(fill_way),
     .hit_o(hit),
-    .hit_way_o(hit_way)
+    .hit_way_o(hit_way),
+    .valid_o(valid_vec)
   );
 
   // 2. Data Array Submodule
@@ -83,11 +85,12 @@ module simple_cache #(
 
   // 3. LRU Controller Submodule
   lru_controller #(
-    .CL(CL), .NW(NW)
+    .CL(CL), .NW(NW), .IDXW((INDEX_W > 0) ? INDEX_W : 1), .WAYW(WAY_W)
   ) u_lru_controller (
     .clk_i(clk_i),
     .arst_ni(arst_ni),
     .index_i(c_index),
+    .valid_i(valid_vec),
     .touch_i(touch),
     .touch_way_i(touch_way),
     .victim_way_o(victim_way)

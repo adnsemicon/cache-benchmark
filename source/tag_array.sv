@@ -14,7 +14,8 @@ module tag_array #(
   input  logic [$clog2(NW)-1:0] fill_way_i,
 
   output logic              hit_o,
-  output logic [$clog2(NW)-1:0] hit_way_o
+  output logic [$clog2(NW)-1:0] hit_way_o,
+  output logic [NW-1:0]     valid_o
 );
 
   localparam int NUM_SETS = CL / NW;
@@ -33,6 +34,8 @@ module tag_array #(
     curr_valid = valid_mem[index_i];
     curr_tags  = tag_mem[index_i];
   end
+
+  assign valid_o = curr_valid;
 
   logic [WAY_W-1:0] match_way;
   logic             is_hit;
