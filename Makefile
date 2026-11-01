@@ -10,8 +10,8 @@ LOG_DIR := $(REPO_ROOT)/log
 XVLOG_CMD += -sv
 # Packages must be compiled before modules that import them. Keep this list
 # ordered instead of relying on find's filesystem-dependent output.
-RTL_SOURCES := $(REPO_ROOT)/source/simple_cache_pkg.sv \
-	$(sort $(filter-out $(REPO_ROOT)/source/simple_cache_pkg.sv,$(wildcard $(REPO_ROOT)/source/*.sv)))
+RTL_SOURCES := $(REPO_ROOT)/source/00_simple_cache_pkg.sv \
+	$(sort $(filter-out $(REPO_ROOT)/source/00_simple_cache_pkg.sv,$(wildcard $(REPO_ROOT)/source/*.sv)))
 TB_SOURCES := $(sort $(wildcard $(REPO_ROOT)/testbench/*.sv))
 XVLOG_CMD += $(RTL_SOURCES) $(TB_SOURCES)
 
