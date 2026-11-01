@@ -32,11 +32,13 @@ module cache_memory #(
 
   integer s, w;
 
+  // This is Cache Lookup operation
   always_comb begin
     hit_o      = 1'b0;
     hit_way_o  = '0;
     hit_line_o = '0;
 
+    //Search all ways in the selected set 
     for (int k = 0; k < NW; k++) begin
       if (valid_mem[lookup_set_i][k] &&
           (tag_mem[lookup_set_i][k] == lookup_tag_i)) begin

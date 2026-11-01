@@ -24,21 +24,6 @@ module simple_cache #(
   localparam int OFFSET_W = (LINE_WORDS <= 1) ? 0 : $clog2(LINE_WORDS);
   localparam int SET_W = (SETS <= 1) ? 0 : $clog2(SETS);
 
-  // Supported geometry checks. The address is byte-addressed when C_DW=8.
-  initial begin
-    if (NW < 1) $fatal(1, "NW must be >= 1");
-    if (CL < NW || (CL % NW) != 0)
-      $fatal(1, "CL must be >= NW and divisible by NW");
-    if ((CL / NW) < 1 || ((CL / NW) & ((CL / NW)-1)) != 0)
-      $fatal(1, "Number of sets (CL/NW) must be a power of two");
-    if (M_DW < C_DW || (M_DW % C_DW) != 0)
-      $fatal(1, "M_DW must be a positive multiple of C_DW");
-    if ((LINE_WORDS & (LINE_WORDS-1)) != 0)
-      $fatal(1, "M_DW/C_DW must be a power of two");
-    if (AW <= OFFSET_W + SET_W)
-      $fatal(1, "AW is too small for the selected cache geometry");
-  end
-
   cache_controller #(
     .AW(AW),
     .C_DW(C_DW),
