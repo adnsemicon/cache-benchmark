@@ -11,7 +11,7 @@ module simple_cache_tb;
   parameter int AW   = 16;
   parameter int C_DW = 8;
   parameter int M_DW = 128;
-  parameter int CL   = 256;
+  parameter int CL   = 512;
   parameter int NW   = 4;
   parameter int N_RANDOM = 20000;
 
