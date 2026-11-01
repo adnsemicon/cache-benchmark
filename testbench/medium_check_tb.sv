@@ -6,7 +6,7 @@ module med_check_tb;
   localparam int CL      = 512;
   localparam int NW      = 4;
   localparam int VC_SIZE = 16;
-  localparam int REPL    = 0;          // 0:LRU(58.22%) 1:DRRIP(60.97%) 2:PLRU(58.19%) 3:BRRIP(61.71%)
+  localparam int REPL    = 3;          // 0:LRU(58.22%) 1:DRRIP(60.97%) 2:PLRU(58.19%) 3:BRRIP(61.71%)
 
   localparam int LINE_BYTES  = M_DW / 8;          // 16
   localparam int OFFSET_BITS = $clog2(LINE_BYTES);

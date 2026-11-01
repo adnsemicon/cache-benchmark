@@ -5,11 +5,13 @@ module simple_cache #(
   parameter int CL      = 256,
   parameter int NW      = 4,
   parameter int VC_SIZE = 16,
-`ifdef USE_DRRIP
-  parameter int REPL    = 3     // DRRIP (compile with -d USE_DRRIP)
-`else
-  parameter int REPL    = 1     // 0: true LRU, 1: DRRIP, 2: PLRU (default), 3: BRRIP 
-`endif
+  parameter int REPL    = 1
+
+// `ifdef USE_DRRIP
+//   parameter int REPL    = 1     // DRRIP (compile with -d USE_DRRIP)
+// `else
+//   parameter int REPL    = 1     // 0: true LRU, 1: DRRIP, 2: PLRU (default), 3: BRRIP 
+// `endif
 )(
   input  logic             arst_ni,
   input  logic             clk_i,
@@ -228,7 +230,7 @@ module simple_cache #(
   //   CNT n=<req> hit=<h> vc=<v> miss=<m>   every 1000 requests and at the end
   //   Set DBG_MAX = 0 before the final submission to silence it.
   //==================================================
-  localparam int DBG_MAX = 70000;
+  localparam int DBG_MAX = 0;  // 70000
 
   int unsigned n_req = 0, n_hit = 0, n_vc = 0, n_miss = 0;
 

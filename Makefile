@@ -40,7 +40,7 @@ simulate:
 	@make -s $(BUILD_DIR)/snap_$(TOP)
 	@cd $(BUILD_DIR) && $(XSIM) snap_$(TOP) -runall -log $(LOG_DIR)/xsim_$(TOP)_$(shell date +%Y%m%d_%H%M%S).log $(EW_HL) 
 	@cd $(LOG_DIR) && cp xsim_*.log ci_log.txt
-	@python analyze_log.py $(LOG_DIR)/ci_log.txt --vc $(VC) --ways $(W) --lines $(L) --linebytes $(BL) --policy $(P)
+	@python3 analyze_log.py $(LOG_DIR)/ci_log.txt --vc $(VC) --ways $(W) --lines $(L) --linebytes $(BL) --policy $(P)
 .PHONY: clean
 clean:
 	@rm -rf $(BUILD_DIR)
