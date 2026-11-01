@@ -1,12 +1,14 @@
 // -----------------------------------------------------------------------------
 // simple_cache : parameterizable, read-only, set-associative cache (true LRU)
 //
-//   | tag | set index | byte offset |      (MSB -> LSB of the byte address)
+//   Byte addresses map to line number, set (line number modulo NS), and tag.
+//   This supports non-power-of-two line sizes and set counts.
 //
 //   c_addr_i -> decode -> tag_ram (compare) -> hit / hit_way
 //                      -> data_ram (read)   -> word select -> c_data_o
 //   ctrl FSM handles misses (refill), lru picks the victim way.
-//   All of AW, C_DW, M_DW, CL, NW must be powers of two.
+//   Widths are byte multiples; the line width must be a multiple of C_DW,
+//   and CL must be divisible by NW.
 // -----------------------------------------------------------------------------
 module simple_cache
   import simple_cache_pkg::*;
@@ -41,10 +43,10 @@ module simple_cache
   end
 
   localparam int NS       = CL / NW;
-  localparam int OFFSET_W = $clog2(M_DW / 8);
-  localparam int IDX_W    = $clog2(NS);
-  localparam int TAG_W    = AW - IDX_W - OFFSET_W;
-  localparam int BYTE_W   = $clog2(C_DW / 8);
+  localparam int LINE_BYTES = M_DW / 8;
+  localparam int C_BYTES    = C_DW / 8;
+  localparam int OFFSET_W   = clog2_min1(LINE_BYTES);
+  localparam int TAG_W      = AW;
   localparam int IDX_WD   = clog2_min1(NS);
   localparam int WAY_WD   = clog2_min1(NW);
 
@@ -59,17 +61,11 @@ module simple_cache
   logic [IDX_WD-1:0]   f_index;
   logic [TAG_W-1:0]    f_tag;
 
-  assign c_offset = c_addr_i[OFFSET_W-1:0];
-  assign c_tag    = c_addr_i[AW-1 -: TAG_W];
-  assign f_tag    = fill_addr[AW-1 -: TAG_W];
-
-  if (IDX_W > 0) begin : g_idx
-    assign c_index = c_addr_i[OFFSET_W +: IDX_W];
-    assign f_index = fill_addr[OFFSET_W +: IDX_W];
-  end else begin : g_noidx
-    assign c_index = '0;
-    assign f_index = '0;
-  end
+  assign c_offset = c_addr_i % LINE_BYTES;
+  assign c_index  = (c_addr_i / LINE_BYTES) % NS;
+  assign c_tag    = (c_addr_i / LINE_BYTES) / NS;
+  assign f_index  = (fill_addr / LINE_BYTES) % NS;
+  assign f_tag    = (fill_addr / LINE_BYTES) / NS;
 
   // ---------------------------------------------------------------------------
   // Internal wiring
@@ -119,7 +115,7 @@ module simple_cache
     .victim_o (victim)
   );
 
-  simple_cache_ctrl #(.AW(AW), .OFFSET_W(OFFSET_W), .NW(NW)) u_ctrl (
+  simple_cache_ctrl #(.AW(AW), .LINE_BYTES(LINE_BYTES), .NW(NW)) u_ctrl (
     .clk_i, .arst_ni,
     .c_addr_i,
     .c_req_i,
@@ -140,7 +136,7 @@ module simple_cache
   // ---------------------------------------------------------------------------
   logic [M_DW-1:0] sel_shifted;
 
-  assign sel_shifted = rd_line >> ((c_offset >> BYTE_W) * C_DW);
+  assign sel_shifted = rd_line >> ((c_offset / C_BYTES) * C_DW);
   assign c_data_o    = c_gnt_o ? sel_shifted[C_DW-1:0] : '0;
 
 endmodule

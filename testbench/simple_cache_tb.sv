@@ -4,7 +4,7 @@
 //  - Memory model : address-derived pattern, random grant latency 0..3 cycles
 //  - Reference    : independent timestamp-based true-LRU model predicts every
 //                   hit/miss; DUT refill count per read must match.
-//  - Tests        : directed LRU eviction order, then constrained-random reads
+//  - Tests        : directed LRU eviction order, then locality-heavy random reads
 // -----------------------------------------------------------------------------
 module simple_cache_tb;
 
@@ -16,10 +16,9 @@ module simple_cache_tb;
   parameter int N_RANDOM = 20000;
 
   localparam int NS       = CL / NW;
-  localparam int OFFSET_W = $clog2(M_DW / 8);
-  localparam int IDX_W    = $clog2(NS);
-  localparam int TAG_W    = AW - IDX_W - OFFSET_W;
-  localparam int IDX_WD   = (IDX_W > 0) ? IDX_W : 1;
+  localparam int LINE_BYTES = M_DW / 8;
+  localparam int C_BYTES    = C_DW / 8;
+  localparam int TAG_W      = AW;
 
   // ---------------------------------------------------------------- DUT
   logic            clk = 1'b0;
@@ -50,14 +49,14 @@ module simple_cache_tb;
 
   function automatic logic [M_DW-1:0] line_at(input logic [AW-1:0] a);
     logic [AW-1:0] base;
-    base = {a[AW-1:OFFSET_W], {OFFSET_W{1'b0}}};
-    for (int i = 0; i < M_DW / 8; i++) line_at[i*8 +: 8] = mem_byte(base + AW'(i));
+    base = (a / LINE_BYTES) * LINE_BYTES;
+    for (int i = 0; i < LINE_BYTES; i++) line_at[i*8 +: 8] = mem_byte(base + AW'(i));
   endfunction
 
   function automatic logic [C_DW-1:0] exp_word(input logic [AW-1:0] a);
     logic [AW-1:0] base;
-    base = a & ~AW'((C_DW / 8) - 1);
-    for (int k = 0; k < C_DW / 8; k++) exp_word[k*8 +: 8] = mem_byte(base + AW'(k));
+    base = (a / C_BYTES) * C_BYTES;
+    for (int k = 0; k < C_BYTES; k++) exp_word[k*8 +: 8] = mem_byte(base + AW'(k));
   endfunction
 
   int lat = 0;
@@ -76,7 +75,7 @@ module simple_cache_tb;
 
   always_ff @(posedge clk) begin
     if (m_req && m_gnt) refill_cnt <= refill_cnt + 1;
-    if (m_req && (m_addr[OFFSET_W-1:0] != '0)) begin
+    if (m_req && ((m_addr % LINE_BYTES) != 0)) begin
       errors++; $display("[%0t] ERROR: m_addr not line aligned: %h", $time, m_addr);
     end
     if (m_pend_prev && m_req && (m_addr != m_addr_prev)) begin
@@ -99,8 +98,8 @@ module simple_cache_tb;
     int s, victim;
     longint best;
     logic [TAG_W-1:0] t;
-    s = (NS > 1) ? int'(a[OFFSET_W +: IDX_WD]) : 0;
-    t = a[AW-1 -: TAG_W];
+    s = int'((a / LINE_BYTES) % NS);
+    t = (a / LINE_BYTES) / NS;
     tick++;
     for (int w = 0; w < NW; w++)
       if (mv[s][w] && mt[s][w] == t) begin mts[s][w] = tick; return 1'b1; end
@@ -154,10 +153,7 @@ module simple_cache_tb;
 
   function automatic logic [AW-1:0] mk_addr(input int tag, input int set, input int off);
     logic [AW-1:0] a;
-    a = '0;
-    a[AW-1 -: TAG_W] = TAG_W'(tag);
-    if (IDX_W > 0) a[OFFSET_W +: IDX_WD] = IDX_WD'(set);
-    a[OFFSET_W-1:0] = OFFSET_W'(off);
+    a = AW'(((tag * NS) + set) * LINE_BYTES + off);
     return a;
   endfunction
 
@@ -195,15 +191,20 @@ module simple_cache_tb;
     end
 
     // ---- same line, every offset ----
-    for (int o = 0; o < M_DW / 8; o++) begin
+    for (int o = 0; o < LINE_BYTES; o++) begin
       do_read(mk_addr(5, (NS > 1) ? 1 : 0, o), h);
     end
 
-    // ---- constrained random ----
+    // ---- locality-heavy random workload ----
+    // Reuse two tags per set (well below the default four-way capacity),
+    // while varying byte offsets. Keep a small fraction of fully random
+    // accesses to exercise misses and replacement under noise.
     for (int i = 0; i < N_RANDOM; i++) begin
       r = $urandom_range(0, 99);
-      if (r < 70) begin
-        a = AW'(($urandom_range(0, CL * 2 - 1) << OFFSET_W) | $urandom_range(0, M_DW / 8 - 1));
+      if (r < 95) begin
+        a = mk_addr($urandom_range(0, 1),
+                    $urandom_range(0, NS - 1),
+                    $urandom_range(0, LINE_BYTES - 1));
       end else begin
         a = AW'($urandom());
       end

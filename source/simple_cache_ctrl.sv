@@ -11,7 +11,7 @@ module simple_cache_ctrl
   import simple_cache_pkg::*;
 #(
   parameter int AW       = 16,
-  parameter int OFFSET_W = 4,
+  parameter int LINE_BYTES = 16,
   parameter int NW       = 4,
   localparam int WAY_WD  = clog2_min1(NW)
 ) (
@@ -47,7 +47,7 @@ module simple_cache_ctrl
   assign lru_upd_o   = c_gnt_o;
 
   assign m_req_o     = (state_q == S_REFILL);
-  assign m_addr_o    = {miss_addr_q[AW-1:OFFSET_W], {OFFSET_W{1'b0}}};
+  assign m_addr_o    = miss_addr_q - (miss_addr_q % LINE_BYTES);
 
   assign fill_en_o   = m_req_o && m_gnt_i;
   assign fill_way_o  = victim_q;
