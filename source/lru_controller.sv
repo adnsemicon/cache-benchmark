@@ -1,4 +1,4 @@
-// lru_controller : Invalid-first replacement with pseudo-LRU for four ways.
+// lru_controller : Exact LRU replacement with invalid-way-first allocation.
 module lru_controller #(
   parameter int CL = 256,
   parameter int NW = 4,
@@ -17,58 +17,46 @@ module lru_controller #(
 );
 
   localparam int NUM_SETS = CL / NW;
-  logic [NUM_SETS-1:0][2:0] lru_state;
-  logic [NUM_SETS-1:0][WAYW-1:0] rr_next;
-  logic [WAYW-1:0] policy_victim;
-
-  generate
-    if (NW == 4) begin : g_plru
-      always_comb begin
-        if (!lru_state[index_i][2]) begin
-          policy_victim = lru_state[index_i][1] ? 2'd1 : 2'd0;
-        end else begin
-          policy_victim = lru_state[index_i][0] ? 2'd3 : 2'd2;
-        end
-      end
-
-      always_ff @(posedge clk_i or negedge arst_ni) begin
-        if (!arst_ni) begin
-          lru_state <= '0;
-        end else if (touch_i) begin
-          unique case (touch_way_i)
-            2'd0: lru_state[index_i] <= {1'b1, 1'b1, lru_state[index_i][0]};
-            2'd1: lru_state[index_i] <= {1'b1, 1'b0, lru_state[index_i][0]};
-            2'd2: lru_state[index_i] <= {1'b0, lru_state[index_i][1], 1'b1};
-            2'd3: lru_state[index_i] <= {1'b0, lru_state[index_i][1], 1'b0};
-            default: ;
-          endcase
-        end
-      end
-    end else begin : g_round_robin
-      always_comb begin
-        policy_victim = rr_next[index_i];
-      end
-
-      always_ff @(posedge clk_i or negedge arst_ni) begin
-        if (!arst_ni) begin
-          rr_next <= '0;
-        end else if (touch_i) begin
-          if (touch_way_i == WAYW'(NW - 1)) begin
-            rr_next[index_i] <= '0;
-          end else begin
-            rr_next[index_i] <= touch_way_i + 1'b1;
-          end
-        end
-      end
-    end
-  endgenerate
+  localparam int AGE_W = (NW > 1) ? $clog2(NW) : 1;
+  logic [NUM_SETS-1:0][NW-1:0][AGE_W-1:0] age_mem;
 
   always_comb begin
-    victim_way_o = policy_victim;
+    logic [AGE_W-1:0] oldest_age;
+
+    victim_way_o = '0;
+    oldest_age = '0;
+
     for (int w = 0; w < NW; w++) begin
       if (!valid_i[w]) begin
         victim_way_o = WAYW'(w);
         break;
+      end
+    end
+
+    if (&valid_i) begin
+      for (int w = 0; w < NW; w++) begin
+        if (age_mem[index_i][w] >= oldest_age) begin
+          oldest_age = age_mem[index_i][w];
+          victim_way_o = WAYW'(w);
+        end
+      end
+    end
+  end
+
+  always_ff @(posedge clk_i or negedge arst_ni) begin
+    if (!arst_ni) begin
+      for (int s = 0; s < NUM_SETS; s++) begin
+        for (int w = 0; w < NW; w++) begin
+          age_mem[s][w] <= AGE_W'(NW - 1 - w);
+        end
+      end
+    end else if (touch_i && (int'(touch_way_i) < NW)) begin
+      for (int w = 0; w < NW; w++) begin
+        if (w == int'(touch_way_i)) begin
+          age_mem[index_i][w] <= '0;
+        end else if (age_mem[index_i][w] < age_mem[index_i][touch_way_i]) begin
+          age_mem[index_i][w] <= age_mem[index_i][w] + 1'b1;
+        end
       end
     end
   end
