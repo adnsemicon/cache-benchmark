@@ -10,9 +10,7 @@
 //   Widths are byte multiples; the line width must be a multiple of C_DW,
 //   and CL must be divisible by NW.
 // -----------------------------------------------------------------------------
-module simple_cache
-  import simple_cache_pkg::*;
-#(
+module simple_cache #(
   parameter int AW   = 16,   // address width (bits)
   parameter int C_DW = 8,    // cache-side data width (bits)
   parameter int M_DW = 128,  // memory-side data width = cache line size (bits)
@@ -34,6 +32,21 @@ module simple_cache
   input  logic [M_DW-1:0] m_data_i,
   input  logic            m_gnt_i
 );
+
+  function automatic int unsigned clog2_min1(input int unsigned n);
+    int unsigned c;
+    c = $clog2(n);
+    return (c < 1) ? 1 : c;
+  endfunction
+
+  function automatic bit params_legal(input int aw, input int c_dw, input int m_dw,
+                                      input int cl, input int nw);
+    if (aw < 1 || c_dw < 8 || m_dw < 8 || cl < 1 || nw < 1) return 1'b0;
+    if ((c_dw % 8) != 0 || (m_dw % 8) != 0) return 1'b0;
+    if ((m_dw < c_dw) || ((m_dw % c_dw) != 0)) return 1'b0;
+    if ((cl < nw) || ((cl % nw) != 0)) return 1'b0;
+    return 1'b1;
+  endfunction
 
   // ---------------------------------------------------------------------------
   // Parameter check and derived values

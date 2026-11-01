@@ -5,14 +5,12 @@
 //  - No reset: contents are only used after the valid bit is set.
 //  - Replace the array with an SRAM/BRAM wrapper here (adds a read cycle).
 // -----------------------------------------------------------------------------
-module simple_cache_data_ram
-  import simple_cache_pkg::*;
-#(
+module simple_cache_data_ram #(
   parameter int NS   = 64,
   parameter int NW   = 4,
   parameter int M_DW = 128,
-  localparam int IDX_WD = clog2_min1(NS),
-  localparam int WAY_WD = clog2_min1(NW)
+  localparam int IDX_WD = (NS > 1) ? $clog2(NS) : 1,
+  localparam int WAY_WD = (NW > 1) ? $clog2(NW) : 1
 ) (
   input  logic              clk_i,
 

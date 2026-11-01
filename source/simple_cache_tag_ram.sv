@@ -6,14 +6,12 @@
 //  - Valid bits reset to 0. Tags need no reset (gated by valid).
 //  - Replace the array with an SRAM macro wrapper here if needed.
 // -----------------------------------------------------------------------------
-module simple_cache_tag_ram
-  import simple_cache_pkg::*;
-#(
+module simple_cache_tag_ram #(
   parameter int NS    = 64,
   parameter int NW    = 4,
   parameter int TAG_W = 6,
-  localparam int IDX_WD = clog2_min1(NS),
-  localparam int WAY_WD = clog2_min1(NW)
+  localparam int IDX_WD = (NS > 1) ? $clog2(NS) : 1,
+  localparam int WAY_WD = (NW > 1) ? $clog2(NW) : 1
 ) (
   input  logic              clk_i,
   input  logic              arst_ni,

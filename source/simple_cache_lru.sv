@@ -7,13 +7,11 @@
 //  - victim_o : first invalid way of the set, otherwise the way with age NW-1.
 //  To switch policy (e.g. tree-PLRU) replace only this module.
 // -----------------------------------------------------------------------------
-module simple_cache_lru
-  import simple_cache_pkg::*;
-#(
+module simple_cache_lru #(
   parameter int NS = 64,
   parameter int NW = 4,
-  localparam int IDX_WD = clog2_min1(NS),
-  localparam int WAY_WD = clog2_min1(NW)
+  localparam int IDX_WD = (NS > 1) ? $clog2(NS) : 1,
+  localparam int WAY_WD = (NW > 1) ? $clog2(NW) : 1
 ) (
   input  logic              clk_i,
   input  logic              arst_ni,

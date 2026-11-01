@@ -7,13 +7,11 @@
 //             then pulse fill_en_o (arrays are written) and return to S_IDLE.
 //             The request is then retried, hits, and is granted.
 // -----------------------------------------------------------------------------
-module simple_cache_ctrl
-  import simple_cache_pkg::*;
-#(
+module simple_cache_ctrl #(
   parameter int AW       = 16,
   parameter int LINE_BYTES = 16,
   parameter int NW       = 4,
-  localparam int WAY_WD  = clog2_min1(NW)
+  localparam int WAY_WD  = (NW > 1) ? $clog2(NW) : 1
 ) (
   input  logic              clk_i,
   input  logic              arst_ni,
@@ -39,6 +37,7 @@ module simple_cache_ctrl
   input  logic              m_gnt_i
 );
 
+  typedef enum logic {S_IDLE, S_REFILL} state_e;
   state_e            state_q;
   logic [AW-1:0]     miss_addr_q;
   logic [WAY_WD-1:0] victim_q;
