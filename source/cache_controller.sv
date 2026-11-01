@@ -9,7 +9,7 @@
 //   RESP : c_gnt_o = 1 for exactly one cycle, then back to IDLE
 //
 // Latency: hit = 1 cycle after req, miss = memory latency + 2.
-// Replacement: first invalid way, otherwise LFU with LFSR random tie-break.
+// Replacement: first invalid way, otherwise DRRIP (see rrip_replacement.sv).
 module cache_controller #(
     parameter int AW   = 16,
     parameter int C_DW = 8,
@@ -74,12 +74,8 @@ module cache_controller #(
     logic                   hit;
     logic [WAY_WIDTH-1:0]   hit_way;
     logic [C_DW-1:0]        cached_data;
-    logic [NW-1:0]          lfu_candidates;
-
-    logic [NW-1:0]          victim_candidates;
-    logic [WAY_WIDTH-1:0]   random_way, selected_victim;
-    logic [7:0]             random_value;
-    logic                   any_invalid, multiple_victims;
+    logic [WAY_WIDTH-1:0]   rrip_victim, selected_victim;
+    logic                   any_invalid;
 
     logic                   accept, hit_accept, miss_accept, refill_en;
 
@@ -136,42 +132,22 @@ module cache_controller #(
         .refill_data_i  (m_data_i)
     );
 
-    lfu_replacement #(.COUNTER_WIDTH(4), .NUM_SETS(NUM_SETS), .NW(NW)) replacement (
+    rrip_replacement #(.RRPV_WIDTH(2), .NUM_SETS(NUM_SETS), .NW(NW)) replacement (
         .clk_i, .arst_ni,
-        .set_index_i      (set_idx),
-        .hit_way_i        (hit_way),
-        .hit_i            (hit_accept),
-        .refill_valid_i   (refill_en),
-        .refill_way_i     (victim_q),
-        .valid_mask_i     (valid_mask),
-        .candidate_mask_o (lfu_candidates)
+        .set_index_i    (set_idx),
+        .hit_i          (hit_accept),
+        .hit_way_i      (hit_way),
+        .refill_valid_i (refill_en),
+        .refill_way_i   (victim_q),
+        .valid_mask_i   (valid_mask),
+        .victim_way_o   (rrip_victim)
     );
 
-    // ---- victim selection ------------------------------------------------
-    assign any_invalid       = |invalid_mask;
-    assign victim_candidates = lfu_candidates;
+    // ---- victim selection: first invalid way, else DRRIP -----------------
+    assign any_invalid = |invalid_mask;
 
     always_comb begin
-        int unsigned n;
-        n = 0;
-        for (int w = 0; w < NW; w++) if (victim_candidates[w]) n++;
-        multiple_victims = (n > 1);
-    end
-
-    lfsr #(.LFSR_WIDTH(8)) random_generator (
-        .clk_i, .arst_ni,
-        .advance_i (miss_accept && !any_invalid && multiple_victims),
-        .lfsr_o    (random_value)
-    );
-
-    random_tiebreaker #(.NW(NW), .RNG_WIDTH(8)) tie_breaker (
-        .candidate_mask (victim_candidates),
-        .random_value   (random_value),
-        .victim_way     (random_way)
-    );
-
-    always_comb begin
-        selected_victim = random_way;
+        selected_victim = rrip_victim;
         if (any_invalid) begin
             selected_victim = '0;
             for (int w = NW - 1; w >= 0; w--)
