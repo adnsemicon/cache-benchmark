@@ -4,17 +4,17 @@
 // Checking strategy
 //   * Data    : every granted read is compared against an address-derived
 //               memory pattern (what a flat memory would return).
-//   * Hit/miss: an independent tree-PLRU reference model predicts
+//   * Hit/miss: an independent timestamp-based true-LRU reference model predicts
 //               whether each read hits; the DUT's refill count must agree.
 //   * Protocol: line-aligned and stable m_addr_o, m_req_o held until m_gnt_i,
 //               m_addr_o equals the requested line, no c_gnt_o without c_req_o,
 //               bounded response time, and zero-wait-state hits.
 //
 // Test phases
-//   1 directed : PLRU eviction order
+//   1 directed : LRU eviction order
 //   2 directed : every byte offset of a line
 //   3 stream   : sequential words over twice the cache capacity
-//   4 thrash   : cyclic access to NW+1 tags in one set
+//   4 thrash   : cyclic access to NW+1 tags in one set (LRU worst case)
 //   5 locality : two hot tags per set, 5 % random noise
 //   6 mixed    : working set of 2*CL lines plus fully random addresses
 //   7 reset    : asynchronous reset must invalidate every line
@@ -174,14 +174,12 @@ module simple_cache_tb;
   end
 
   //----------------------------------------------------------------------------
-  // Reference model: tree-PLRU, independent of the DUT replacement state.
+  // Reference model: true LRU by timestamps, independent of DUT ages.
   //----------------------------------------------------------------------------
   bit               mv  [NS][NW];
   logic [TAG_W-1:0] mt  [NS][NW];
-  localparam int PLRU_LEVELS = (NW > 1) ? $clog2(NW) : 0;
-  localparam int PLRU_LEAVES = 2 ** PLRU_LEVELS;
-  localparam int PLRU_NODES = (PLRU_LEAVES > 1) ? PLRU_LEAVES - 1 : 1;
-  bit               model_plru [NS][PLRU_NODES];
+  longint           mts [NS][NW];
+  longint           tick = 0;
   bit               model_evicted;
 
   function automatic int set_of(input logic [AW-1:0] a);
@@ -194,66 +192,33 @@ module simple_cache_tb;
       for (int w = 0; w < NW; w++) begin
         mv[s][w] = 1'b0;
         mt[s][w] = '0;
+        mts[s][w] = 0;
       end
-    for (int s = 0; s < NS; s++)
-      for (int n = 0; n < PLRU_NODES; n++) model_plru[s][n] = 1'b0;
   endtask
 
-  // Update the tree on the accessed way, as the DUT does on its grant.
+  // Returns 1 on a predicted hit; updates recency and contents.
   function automatic bit model_access(input logic [AW-1:0] a);
-    int s, victim, node, start_way, span, right_start, way_span, branch;
+    int s, victim;
+    longint best;
     logic [TAG_W-1:0] t;
     s = set_of(a);
     t = a[AW-1 -: TAG_W];
+    tick++;
     model_evicted = 1'b0;
-    for (int w = 0; w < NW; w++) begin
-      if (mv[s][w] && mt[s][w] == t) begin
-        if (NW > 1) begin
-          node = 0;
-          way_span = PLRU_LEAVES;
-          for (int level = 0; level < PLRU_LEVELS; level++) begin
-            way_span = way_span / 2;
-            branch = (w / way_span) % 2;
-            model_plru[s][node] = (branch == 0);
-            node = 2 * node + 1 + branch;
-          end
-        end
-        return 1'b1;
-      end
-    end
+    for (int w = 0; w < NW; w++)
+      if (mv[s][w] && mt[s][w] == t) begin mts[s][w] = tick; return 1'b1; end
     victim = -1;
     for (int w = 0; w < NW; w++)
       if (!mv[s][w]) begin victim = w; break; end
     if (victim < 0) begin
       model_evicted = 1'b1;
-      node = 0;
-      start_way = 0;
-      span = PLRU_LEAVES;
-      for (int level = 0; level < PLRU_LEVELS; level++) begin
-        span = span / 2;
-        right_start = start_way + span;
-        if (right_start >= NW || !model_plru[s][node]) begin
-          node = 2 * node + 1;
-        end else begin
-          node = 2 * node + 2;
-          start_way = right_start;
-        end
-      end
-      victim = start_way;
+      best = mts[s][0]; victim = 0;
+      for (int w = 1; w < NW; w++)
+        if (mts[s][w] < best) begin best = mts[s][w]; victim = w; end
     end
     mv[s][victim] = 1'b1;
     mt[s][victim] = t;
-    // A refilled line is granted on the controller's retry cycle.
-    if (NW > 1) begin
-      node = 0;
-      way_span = PLRU_LEAVES;
-      for (int level = 0; level < PLRU_LEVELS; level++) begin
-        way_span = way_span / 2;
-        branch = (victim / way_span) % 2;
-        model_plru[s][node] = (branch == 0);
-        node = 2 * node + 1 + branch;
-      end
-    end
+    mts[s][victim] = tick;
     return 1'b0;
   endfunction
 
@@ -386,20 +351,14 @@ module simple_cache_tb;
   //----------------------------------------------------------------------------
   // Test phases
   //----------------------------------------------------------------------------
-  task automatic phase_plru_order();
-    bit h;
-    begin_phase("1 directed: PLRU order");
+  task automatic phase_lru_order();
+    begin_phase("1 directed: LRU order");
     if (NW > 1) begin
       for (int t = 0; t < NW; t++) expect_hit(mk_addr(t, 0, 0), 1'b0, "cold fill");
       expect_hit(mk_addr(0, 0, 3),  1'b1, "same line, other byte, must hit");
       expect_hit(mk_addr(NW, 0, 0), 1'b0, "new tag must evict");
-      if (NW == 4) begin
-        expect_hit(mk_addr(0, 0, 0), 1'b1, "tag0 survives PLRU replacement");
-        expect_hit(mk_addr(1, 0, 0), 1'b1, "tag1 survives PLRU replacement");
-      end else begin
-        do_read(mk_addr(0, 0, 0), h);
-        do_read(mk_addr(1, 0, 0), h);
-      end
+      expect_hit(mk_addr(0, 0, 0), 1'b1, "tag0 was MRU, must survive");
+      expect_hit(mk_addr(1, 0, 0), 1'b0, "tag1 was LRU, must be evicted");
     end
     end_phase();
   endtask
@@ -515,7 +474,7 @@ module simple_cache_tb;
     clear_model();
 
     apply_reset();
-    phase_plru_order();
+    phase_lru_order();
     phase_offsets();
     phase_stream();
     phase_thrash();

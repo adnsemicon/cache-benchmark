@@ -1,12 +1,12 @@
 // -----------------------------------------------------------------------------
-// simple_cache : parameterizable, read-only, set-associative cache
+// simple_cache : parameterizable, read-only, set-associative cache (true LRU)
 //
 //   Byte addresses map to line number, set (line number modulo NS), and tag.
 //   This supports non-power-of-two line sizes and set counts.
 //
 //   c_addr_i -> decode -> tag_ram (compare) -> hit / hit_way
 //                      -> data_ram (read)   -> word select -> c_data_o
-//   ctrl FSM handles misses (refill), the selected policy picks the victim way.
+//   ctrl FSM handles misses (refill), true LRU picks the victim way.
 //   Widths are byte multiples; the line width must be a multiple of C_DW,
 //   and CL must be divisible by NW.
 // -----------------------------------------------------------------------------
@@ -15,8 +15,7 @@ module simple_cache #(
   parameter int C_DW = 8,    // cache-side data width (bits)
   parameter int M_DW = 128,  // memory-side data width = cache line size (bits)
   parameter int CL   = 256,  // total number of cache lines
-  parameter int NW   = 4,    // number of ways
-  parameter int REPLACEMENT_POLICY = 1 // 0: LRU, 1: tree PLRU
+  parameter int NW   = 4     // number of ways
 ) (
   input  logic            arst_ni,
   input  logic            clk_i,
@@ -120,28 +119,14 @@ module simple_cache #(
     .wr_line_i  (m_data_i)
   );
 
-  if (REPLACEMENT_POLICY == 0) begin : g_lru
-    simple_cache_lru #(.NS(NS), .NW(NW)) u_replacement (
-      .clk_i, .arst_ni,
-      .index_i  (c_index),
-      .valid_i  (valid_set),
-      .upd_i    (lru_upd),
-      .way_i    (hit_way),
-      .victim_o (victim)
-    );
-  end else if (REPLACEMENT_POLICY == 1) begin : g_plru
-    simple_cache_plru #(.NS(NS), .NW(NW)) u_replacement (
-      .clk_i, .arst_ni,
-      .index_i  (c_index),
-      .valid_i  (valid_set),
-      .upd_i    (lru_upd),
-      .way_i    (hit_way),
-      .victim_o (victim)
-    );
-  end else begin : g_bad_policy
-    initial $fatal(1, "simple_cache: REPLACEMENT_POLICY must be 0 (LRU) or 1 (PLRU)");
-    assign victim = '0;
-  end
+  simple_cache_lru #(.NS(NS), .NW(NW)) u_lru (
+    .clk_i, .arst_ni,
+    .index_i  (c_index),
+    .valid_i  (valid_set),
+    .upd_i    (lru_upd),
+    .way_i    (hit_way),
+    .victim_o (victim)
+  );
 
   simple_cache_ctrl #(.AW(AW), .LINE_BYTES(LINE_BYTES), .NW(NW)) u_ctrl (
     .clk_i, .arst_ni,
