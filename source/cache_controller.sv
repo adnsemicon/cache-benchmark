@@ -11,39 +11,39 @@
 // Latency: hit = 1 cycle after req, miss = memory latency + 2.
 // Replacement: first invalid way, otherwise LFU with LFSR random tie-break.
 module cache_controller #(
-    parameter AW   = 16,
-    parameter C_DW = 8,
-    parameter M_DW = 128,
-    parameter CL   = 256,
-    parameter NW   = 4
+    parameter int AW   = 16,
+    parameter int C_DW = 8,
+    parameter int M_DW = 128,
+    parameter int CL   = 256,
+    parameter int NW   = 4
 ) (
-    input  wire            clk_i,
-    input  wire            arst_ni,
-    input  wire            c_req_i,
-    input  wire [AW-1:0]   c_addr_i,
-    output reg             c_gnt_o,
-    output reg  [C_DW-1:0] c_data_o,
-    output reg  [AW-1:0]   m_addr_o,
-    output reg             m_req_o,
-    input  wire [M_DW-1:0] m_data_i,
-    input  wire            m_gnt_i
+    input  logic            clk_i,
+    input  logic            arst_ni,
+    input  logic            c_req_i,
+    input  logic [AW-1:0]   c_addr_i,
+    output logic            c_gnt_o,
+    output logic [C_DW-1:0] c_data_o,
+    output logic [AW-1:0]   m_addr_o,
+    output logic            m_req_o,
+    input  logic [M_DW-1:0] m_data_i,
+    input  logic            m_gnt_i
 );
 
-    localparam NUM_SETS   = CL / NW;
-    localparam LINE_BYTES = M_DW / 8;
-    localparam OFF_W      = $clog2(LINE_BYTES);
-    localparam IDX_W      = $clog2(NUM_SETS);
-    localparam SETS_POW2  = (NUM_SETS & (NUM_SETS - 1)) == 0;
-    localparam RAW_TAG_W  = SETS_POW2 ? AW - OFF_W - IDX_W : AW - OFF_W;
-    localparam TAG_WIDTH  = (RAW_TAG_W > 0) ? RAW_TAG_W : 1;
-    localparam SET_WIDTH  = (NUM_SETS > 1) ? $clog2(NUM_SETS) : 1;
-    localparam WAY_WIDTH  = (NW > 1) ? $clog2(NW) : 1;
-    localparam WORDS      = M_DW / C_DW;
-    localparam WORD_WIDTH = (WORDS > 1) ? $clog2(WORDS) : 1;
+    localparam int NUM_SETS   = CL / NW;
+    localparam int LINE_BYTES = M_DW / 8;
+    localparam int OFF_W      = $clog2(LINE_BYTES);
+    localparam int IDX_W      = $clog2(NUM_SETS);
+    localparam bit SETS_POW2  = (NUM_SETS & (NUM_SETS - 1)) == 0;
+    localparam int RAW_TAG_W  = SETS_POW2 ? AW - OFF_W - IDX_W : AW - OFF_W;
+    localparam int TAG_WIDTH  = (RAW_TAG_W > 0) ? RAW_TAG_W : 1;
+    localparam int SET_WIDTH  = (NUM_SETS > 1) ? $clog2(NUM_SETS) : 1;
+    localparam int WAY_WIDTH  = (NW > 1) ? $clog2(NW) : 1;
+    localparam int WORDS      = M_DW / C_DW;
+    localparam int WORD_WIDTH = (WORDS > 1) ? $clog2(WORDS) : 1;
 
-    localparam [1:0] ST_IDLE = 2'd0;
-    localparam [1:0] ST_MEM  = 2'd1;
-    localparam [1:0] ST_RESP = 2'd2;
+    localparam logic [1:0] ST_IDLE = 2'd0;
+    localparam logic [1:0] ST_MEM  = 2'd1;
+    localparam logic [1:0] ST_RESP = 2'd2;
 
     // ------------------------------------------------------------------
     initial begin
@@ -58,31 +58,30 @@ module cache_controller #(
     end
 
     // ------------------------------------------------------------------
-    reg [1:0]             state_q;
-    reg [AW-1:0]          req_addr_q;
-    reg [AW-1:0]          mem_addr_q;
-    reg [WAY_WIDTH-1:0]   victim_q;
-    reg [C_DW-1:0]        resp_data_q;
+    logic [1:0]             state_q;
+    logic [AW-1:0]          req_addr_q;
+    logic [AW-1:0]          mem_addr_q;
+    logic [WAY_WIDTH-1:0]   victim_q;
+    logic [C_DW-1:0]        resp_data_q;
 
-    wire [AW-1:0]         lookup_addr;
-    wire [TAG_WIDTH-1:0]  tag;
-    wire [SET_WIDTH-1:0]  set_idx;
-    wire [WORD_WIDTH-1:0] word;
-    wire [AW-1:0]         aligned_addr;
+    logic [AW-1:0]          lookup_addr;
+    logic [TAG_WIDTH-1:0]   tag;
+    logic [SET_WIDTH-1:0]   set_idx;
+    logic [WORD_WIDTH-1:0]  word;
+    logic [AW-1:0]          aligned_addr;
 
-    wire [NW-1:0]         valid_mask, invalid_mask;
-    wire                  hit;
-    wire [WAY_WIDTH-1:0]  hit_way;
-    wire [C_DW-1:0]       cached_data;
-    wire [NW-1:0]         lfu_candidates;
+    logic [NW-1:0]          valid_mask, invalid_mask;
+    logic                   hit;
+    logic [WAY_WIDTH-1:0]   hit_way;
+    logic [C_DW-1:0]        cached_data;
+    logic [NW-1:0]          lfu_candidates;
 
-    wire [NW-1:0]         victim_candidates;
-    reg [WAY_WIDTH-1:0]   random_way, selected_victim;
-    wire [7:0]            random_value;
-    wire                  any_invalid;
-    reg                   multiple_victims;
+    logic [NW-1:0]          victim_candidates;
+    logic [WAY_WIDTH-1:0]   random_way, selected_victim;
+    logic [7:0]             random_value;
+    logic                   any_invalid, multiple_victims;
 
-    wire                  accept, hit_accept, miss_accept, refill_en;
+    logic                   accept, hit_accept, miss_accept, refill_en;
 
     // The lookup path looks at the incoming address while idle and at the
     // latched address while a miss is being serviced.
@@ -94,105 +93,100 @@ module cache_controller #(
     assign refill_en   = (state_q == ST_MEM) && m_gnt_i;
 
     cache_address_decoder #(.AW(AW), .C_DW(C_DW), .M_DW(M_DW), .CL(CL), .NW(NW)) address_decoder (
-        .c_addr_i(lookup_addr),
-        .tag_o(tag),
-        .index_o(set_idx),
-        .line_offset_o(),
-        .word_offset_o(word),
-        .m_addr_o(aligned_addr)
+        .c_addr_i      (lookup_addr),
+        .tag_o         (tag),
+        .index_o       (set_idx),
+        .line_offset_o (),
+        .word_offset_o (word),
+        .m_addr_o      (aligned_addr)
     );
 
     cache_valid_array #(.NUM_SETS(NUM_SETS), .NW(NW)) valid_array (
-        .clk_i(clk_i), .arst_ni(arst_ni),
-        .lookup_set_i(set_idx),
-        .refill_valid_i(refill_en),
-        .refill_set_i(set_idx),
-        .refill_way_i(victim_q),
-        .valid_mask_o(valid_mask),
-        .invalid_mask_o(invalid_mask)
+        .clk_i, .arst_ni,
+        .lookup_set_i   (set_idx),
+        .refill_valid_i (refill_en),
+        .refill_set_i   (set_idx),
+        .refill_way_i   (victim_q),
+        .valid_mask_o   (valid_mask),
+        .invalid_mask_o (invalid_mask)
     );
 
     cache_tag_array #(.TAG_WIDTH(TAG_WIDTH), .NUM_SETS(NUM_SETS), .NW(NW)) tag_array (
-        .clk_i(clk_i), .arst_ni(arst_ni),
-        .req_tag_i(tag),
-        .lookup_set_i(set_idx),
-        .valid_mask_i(valid_mask),
-        .refill_valid_i(refill_en),
-        .refill_tag_i(tag),
-        .refill_set_i(set_idx),
-        .refill_way_i(victim_q),
-        .hit_o(hit),
-        .hit_way_o(hit_way)
+        .clk_i, .arst_ni,
+        .req_tag_i      (tag),
+        .lookup_set_i   (set_idx),
+        .valid_mask_i   (valid_mask),
+        .refill_valid_i (refill_en),
+        .refill_tag_i   (tag),
+        .refill_set_i   (set_idx),
+        .refill_way_i   (victim_q),
+        .hit_o          (hit),
+        .hit_way_o      (hit_way)
     );
 
     cache_data_array #(.C_DW(C_DW), .M_DW(M_DW), .CL(CL), .NW(NW)) data_array (
-        .clk_i(clk_i), .arst_ni(arst_ni),
-        .read_set_i(set_idx),
-        .read_way_i(hit_way),
-        .word_offset_i(word),
-        .read_data_o(cached_data),
-        .refill_valid_i(refill_en),
-        .refill_set_i(set_idx),
-        .refill_way_i(victim_q),
-        .refill_data_i(m_data_i)
+        .clk_i, .arst_ni,
+        .read_set_i     (set_idx),
+        .read_way_i     (hit_way),
+        .word_offset_i  (word),
+        .read_data_o    (cached_data),
+        .refill_valid_i (refill_en),
+        .refill_set_i   (set_idx),
+        .refill_way_i   (victim_q),      // victim way, NOT the hit way
+        .refill_data_i  (m_data_i)
     );
 
     lfu_replacement #(.COUNTER_WIDTH(4), .NUM_SETS(NUM_SETS), .NW(NW)) replacement (
-        .clk_i(clk_i), .arst_ni(arst_ni),
-        .set_index_i(set_idx),
-        .hit_way_i(hit_way),
-        .hit_i(hit_accept),
-        .refill_valid_i(refill_en),
-        .refill_way_i(victim_q),
-        .valid_mask_i(valid_mask),
-        .candidate_mask_o(lfu_candidates)
+        .clk_i, .arst_ni,
+        .set_index_i      (set_idx),
+        .hit_way_i        (hit_way),
+        .hit_i            (hit_accept),
+        .refill_valid_i   (refill_en),
+        .refill_way_i     (victim_q),
+        .valid_mask_i     (valid_mask),
+        .candidate_mask_o (lfu_candidates)
     );
 
     // ---- victim selection ------------------------------------------------
     assign any_invalid       = |invalid_mask;
     assign victim_candidates = lfu_candidates;
 
-    always @* begin
-        integer n;
-        integer w;
+    always_comb begin
+        int unsigned n;
         n = 0;
-        for (w = 0; w < NW; w = w + 1)
-            if (victim_candidates[w])
-                n = n + 1;
+        for (int w = 0; w < NW; w++) if (victim_candidates[w]) n++;
         multiple_victims = (n > 1);
     end
 
     lfsr #(.LFSR_WIDTH(8)) random_generator (
-        .clk_i(clk_i), .arst_ni(arst_ni),
-        .advance_i(miss_accept && !any_invalid && multiple_victims),
-        .lfsr_o(random_value)
+        .clk_i, .arst_ni,
+        .advance_i (miss_accept && !any_invalid && multiple_victims),
+        .lfsr_o    (random_value)
     );
 
     random_tiebreaker #(.NW(NW), .RNG_WIDTH(8)) tie_breaker (
-        .candidate_mask(victim_candidates),
-        .random_value(random_value),
-        .victim_way(random_way)
+        .candidate_mask (victim_candidates),
+        .random_value   (random_value),
+        .victim_way     (random_way)
     );
 
-    always @* begin
-        integer w;
+    always_comb begin
         selected_victim = random_way;
         if (any_invalid) begin
-            selected_victim = {WAY_WIDTH{1'b0}};
-            for (w = NW - 1; w >= 0; w = w - 1)
-                if (invalid_mask[w])
-                    selected_victim = w;
+            selected_victim = '0;
+            for (int w = NW - 1; w >= 0; w--)
+                if (invalid_mask[w]) selected_victim = WAY_WIDTH'(w);
         end
     end
 
     // ---- FSM -----------------------------------------------------------
-    always @(posedge clk_i or negedge arst_ni) begin
+    always_ff @(posedge clk_i or negedge arst_ni) begin
         if (!arst_ni) begin
             state_q     <= ST_IDLE;
-            req_addr_q  <= {AW{1'b0}};
-            mem_addr_q  <= {AW{1'b0}};
-            victim_q    <= {WAY_WIDTH{1'b0}};
-            resp_data_q <= {C_DW{1'b0}};
+            req_addr_q  <= '0;
+            mem_addr_q  <= '0;
+            victim_q    <= '0;
+            resp_data_q <= '0;
         end else begin
             case (state_q)
                 ST_IDLE: begin
