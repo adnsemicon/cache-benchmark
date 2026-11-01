@@ -1,16 +1,15 @@
 // -----------------------------------------------------------------------------
-// simple_cache_lru : true-LRU replacement state for every set.
-//
-//  - One age per way per set: 0 = most recently used, NW-1 = least recently used.
-//  - Ages are a permutation of 0..NW-1 (reset: way w has age w).
-//  - upd_i marks way_i most recently used.
-//  - Invalid ways are preferred before the least-recently-used valid way.
+// Tree-PLRU replacement state for every set. The legacy module name and file
+// name are retained so existing source lists need no changes.
 // -----------------------------------------------------------------------------
 module simple_cache_lru #(
   parameter int NS = 64,
   parameter int NW = 4,
   localparam int IDX_WD = (NS > 1) ? $clog2(NS) : 1,
-  localparam int WAY_WD = (NW > 1) ? $clog2(NW) : 1
+  localparam int WAY_WD = (NW > 1) ? $clog2(NW) : 1,
+  localparam int LEVELS = (NW > 1) ? $clog2(NW) : 0,
+  localparam int LEAVES = 2 ** LEVELS,
+  localparam int NODES = (LEAVES > 1) ? LEAVES - 1 : 1
 ) (
   input  logic              clk_i,
   input  logic              arst_ni,
@@ -20,41 +19,60 @@ module simple_cache_lru #(
   input  logic [WAY_WD-1:0] way_i,
   output logic [WAY_WD-1:0] victim_o
 );
-  logic [NS-1:0][NW-1:0][WAY_WD-1:0] age_q;
-
-  function automatic logic [NS-1:0][NW-1:0][WAY_WD-1:0] age_init();
-    logic [NS-1:0][NW-1:0][WAY_WD-1:0] r;
-    for (int s = 0; s < NS; s++)
-      for (int w = 0; w < NW; w++) r[s][w] = WAY_WD'(w);
-    return r;
-  endfunction
-  localparam logic [NS-1:0][NW-1:0][WAY_WD-1:0] AGE_RESET = age_init();
+  // A node bit of 0 points to the left subtree as the next victim; 1 points
+  // right. A complete tree is padded to the next power of two for odd NW.
+  logic [NS-1:0][NODES-1:0] direction_q;
 
   always_comb begin
     logic found_invalid;
+    int node;
+    int start_way;
+    int span;
+    int right_start;
+
     found_invalid = 1'b0;
     victim_o = '0;
-    for (int w = NW - 1; w >= 0; w--) begin
-      if (!valid_i[w]) begin
+    node = 0;
+    start_way = 0;
+    span = LEAVES;
+
+    for (int w = 0; w < NW; w++) begin
+      if (!found_invalid && !valid_i[w]) begin
         victim_o = WAY_WD'(w);
         found_invalid = 1'b1;
       end
     end
+
     if (!found_invalid) begin
-      for (int w = 0; w < NW; w++)
-        if (age_q[index_i][w] == WAY_WD'(NW - 1)) victim_o = WAY_WD'(w);
+      for (int level = 0; level < LEVELS; level++) begin
+        span = span / 2;
+        right_start = start_way + span;
+        if (right_start >= NW || !direction_q[index_i][node]) begin
+          node = 2 * node + 1;
+        end else begin
+          node = 2 * node + 2;
+          start_way = right_start;
+        end
+      end
+      victim_o = WAY_WD'(start_way);
     end
   end
 
   always_ff @(posedge clk_i or negedge arst_ni) begin
+    int node;
+    int way_span;
+    int branch;
     if (!arst_ni) begin
-      age_q <= AGE_RESET;
-    end else if (upd_i) begin
-      for (int w = 0; w < NW; w++) begin
-        if (age_q[index_i][w] < age_q[index_i][way_i])
-          age_q[index_i][w] <= age_q[index_i][w] + 1'b1;
+      direction_q <= '0;
+    end else if (upd_i && NW > 1) begin
+      node = 0;
+      way_span = LEAVES;
+      for (int level = 0; level < LEVELS; level++) begin
+        way_span = way_span / 2;
+        branch = (int'(way_i) / way_span) % 2;
+        direction_q[index_i][node] <= (branch == 0);
+        node = 2 * node + 1 + branch;
       end
-      age_q[index_i][way_i] <= '0;
     end
   end
 endmodule

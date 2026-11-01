@@ -1,12 +1,12 @@
 // -----------------------------------------------------------------------------
-// simple_cache : parameterizable, read-only, set-associative cache (true LRU)
+// simple_cache : parameterizable, read-only, set-associative cache (tree-PLRU)
 //
 //   Byte addresses map to line number, set (line number modulo NS), and tag.
 //   This supports non-power-of-two line sizes and set counts.
 //
 //   c_addr_i -> decode -> tag_ram (compare) -> hit / hit_way
 //                      -> data_ram (read)   -> word select -> c_data_o
-//   ctrl FSM handles misses (refill), lru picks the victim way.
+//   ctrl FSM handles misses (refill), tree-PLRU picks the victim way.
 //   Widths are byte multiples; the line width must be a multiple of C_DW,
 //   and CL must be divisible by NW.
 // -----------------------------------------------------------------------------
@@ -119,7 +119,7 @@ module simple_cache #(
     .wr_line_i  (m_data_i)
   );
 
-  simple_cache_lru #(.NS(NS), .NW(NW)) u_lru (
+  simple_cache_lru #(.NS(NS), .NW(NW)) u_plru (
     .clk_i, .arst_ni,
     .index_i  (c_index),
     .valid_i  (valid_set),
