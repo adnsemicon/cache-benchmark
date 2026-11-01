@@ -287,9 +287,23 @@ module cache_replacement #(
 
       if (commit_hit_i && hit_i) begin
 
-        // Promote accessed block to T2.
+        case (resident_list[set_i][hit_way_i])
 
-        resident_list[set_i][hit_way_i] <= 2'b01;
+          2'b00: begin
+            // T1 hit: promote to T2.
+            resident_list[set_i][hit_way_i] <= 2'b01;
+          end
+
+          2'b01: begin
+            // T2 hit: remain in T2.
+            resident_list[set_i][hit_way_i] <= 2'b01;
+          end
+
+          default: begin
+            // Invalid entries should not receive hit updates.
+          end
+
+        endcase
 
         resident_age[set_i][hit_way_i] <= age_counter[set_i] + 1'b1;
 
