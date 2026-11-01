@@ -92,7 +92,6 @@ module simple_cache #(
     .index_i(c_index),
     .valid_i(valid_vec),
     .touch_i(touch),
-    .fill_i(fill),
     .touch_way_i(touch_way),
     .victim_way_o(victim_way)
   );
