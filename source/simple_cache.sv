@@ -1,86 +1,116 @@
-// simple_cache : top level. Address decode + wiring + word select.
+// simple_cache : Parameterizable Set-Associative Read-Only Cache (Fixed)
 module simple_cache #(
-  parameter int AW   = 16,
-  parameter int C_DW = 8,
-  parameter int M_DW = 128,
-  parameter int CL   = 256,
-  parameter int NW   = 4
-) (
+  parameter int AW   = 16,   // Address Width
+  parameter int C_DW = 8,    // Cache Data Width (CPU side)
+  parameter int M_DW = 128,  // Memory Data Width (Cache Line size)
+  parameter int CL   = 256,  // Total Cache Lines
+  parameter int NW   = 4     // Number of Ways (Associativity)
+)(
   input  logic              arst_ni,
   input  logic              clk_i,
 
+  // CPU Interface
   input  logic [AW-1:0]     c_addr_i,
   input  logic              c_req_i,
   output logic [C_DW-1:0]   c_data_o,
   output logic              c_gnt_o,
 
+  // Memory Interface
   output logic [AW-1:0]     m_addr_o,
   output logic              m_req_o,
   input  logic [M_DW-1:0]   m_data_i,
   input  logic              m_gnt_i
 );
 
-  localparam int OFF    = $clog2(M_DW / 8);
-  localparam int CB     = C_DW / 8;
-  localparam int COFF   = (CB > 1) ? $clog2(CB) : 0;
-  localparam int WORDS  = M_DW / C_DW;
-  localparam int WSELW  = (WORDS > 1) ? $clog2(WORDS) : 1;
-  localparam int SETS   = CL / NW;
-  localparam int IDX    = (SETS > 1) ? $clog2(SETS) : 0;
-  localparam int IDXW   = (IDX > 0) ? IDX : 1;
-  localparam int TAGW   = AW - OFF - IDX;
-  localparam int WAYW   = (NW > 1) ? $clog2(NW) : 1;
+  // Derived Parameters
+  localparam int NUM_SETS = CL / NW;
+  localparam int INDEX_W  = $clog2(NUM_SETS);
+  localparam int OFFSET_W = $clog2(M_DW / 8);
+  localparam int TAG_W    = AW - INDEX_W - OFFSET_W;
+  localparam int WAY_W    = (NW > 1) ? $clog2(NW) : 1;
 
-  logic [IDXW-1:0]  set;
-  logic [TAGW-1:0]  tag;
-  logic [WSELW-1:0] wsel;
+  // Address Decoding
+  logic [TAG_W-1:0]    c_tag;
+  logic [INDEX_W-1:0]  c_index;
+  logic [OFFSET_W-1:0] c_offset;
 
-  assign tag = c_addr_i[AW-1 -: TAGW];
-  if (IDX > 0) begin : g_idx
-    assign set = c_addr_i[OFF +: IDXW];
-  end else begin : g_noidx
-    assign set = '0;
-  end
-  if (WORDS > 1) begin : g_wsel
-    assign wsel = c_addr_i[COFF +: WSELW];
-  end else begin : g_nowsel
-    assign wsel = '0;
-  end
+  assign c_tag    = c_addr_i[AW-1 : AW-TAG_W];
+  assign c_index  = c_addr_i[OFFSET_W + INDEX_W - 1 : OFFSET_W];
+  assign c_offset = c_addr_i[OFFSET_W-1 : 0];
 
-  logic            hit, bypass, fill, touch;
-  logic [WAYW-1:0] hit_way, victim, fill_way, touch_way;
-  logic [NW-1:0]   valid_vec;
-  logic [M_DW-1:0] rd_line, sel_line;
+  // Control Signals & Interconnects
+  logic              hit;
+  logic [WAY_W-1:0]  hit_way;
+  logic [WAY_W-1:0]  victim_way;
+  logic              bypass;
+  logic              fill;
+  logic [WAY_W-1:0]  fill_way;
+  logic              touch;
+  logic [WAY_W-1:0]  touch_way;
 
-  tag_array #(.SETS(SETS), .NW(NW), .IDXW(IDXW), .TAGW(TAGW)) u_tag (
-    .clk_i, .arst_ni,
-    .set_i(set), .tag_i(tag),
-    .hit_o(hit), .hit_way_o(hit_way), .valid_o(valid_vec),
-    .fill_i(fill), .fill_way_i(fill_way)
+  // Memory Address (Cache-line aligned)
+  assign m_addr_o = {c_addr_i[AW-1 : OFFSET_W], {OFFSET_W{1'b0}}};
+
+  // 1. Tag Array Submodule
+  tag_array #(
+    .AW(AW), .CL(CL), .NW(NW)
+  ) u_tag_array (
+    .clk_i(clk_i),
+    .arst_ni(arst_ni),
+    .index_i(c_index),
+    .tag_i(c_tag),
+    .fill_i(fill),
+    .fill_way_i(fill_way),
+    .hit_o(hit),
+    .hit_way_o(hit_way)
   );
 
-  data_array #(.SETS(SETS), .NW(NW), .IDXW(IDXW), .M_DW(M_DW)) u_data (
-    .clk_i,
-    .set_i(set), .rd_way_i(hit_way), .rd_line_o(rd_line),
-    .wr_en_i(fill), .wr_way_i(fill_way), .wr_data_i(m_data_i)
+  // 2. Data Array Submodule
+  data_array #(
+    .CL(CL), .NW(NW), .M_DW(M_DW), .C_DW(C_DW)
+  ) u_data_array (
+    .clk_i(clk_i),
+    .index_i(c_index),
+    .fill_i(fill),
+    .fill_way_i(fill_way),
+    .fill_data_i(m_data_i),
+    .hit_way_i(hit_way),
+    .c_offset_i(c_offset),
+    .m_data_i(m_data_i),
+    .bypass_i(bypass),
+    .c_data_o(c_data_o)
   );
 
-  lru_controller #(.SETS(SETS), .NW(NW), .IDXW(IDXW)) u_lru (
-    .clk_i, .arst_ni,
-    .set_i(set), .valid_i(valid_vec), .victim_o(victim),
-    .touch_i(touch), .touch_way_i(touch_way)
+  // 3. LRU Controller Submodule
+  lru_controller #(
+    .CL(CL), .NW(NW)
+  ) u_lru_controller (
+    .clk_i(clk_i),
+    .arst_ni(arst_ni),
+    .index_i(c_index),
+    .touch_i(touch),
+    .touch_way_i(touch_way),
+    .victim_way_o(victim_way)
   );
 
-  cache_controller #(.NW(NW)) u_ctrl (
-    .c_req_i, .c_gnt_o,
-    .m_req_o, .m_gnt_i,
-    .hit_i(hit), .hit_way_i(hit_way), .victim_i(victim),
-    .bypass_o(bypass), .fill_o(fill), .fill_way_o(fill_way),
-    .touch_o(touch), .touch_way_o(touch_way)
+  // 4. Cache Controller Submodule (FSM-based)
+  cache_controller #(
+    .NW(NW)
+  ) u_cache_controller (
+    .clk_i(clk_i),
+    .arst_ni(arst_ni),
+    .c_req_i(c_req_i),
+    .c_gnt_o(c_gnt_o),
+    .m_req_o(m_req_o),
+    .m_gnt_i(m_gnt_i),
+    .hit_i(hit),
+    .hit_way_i(hit_way),
+    .victim_i(victim_way),
+    .bypass_o(bypass),
+    .fill_o(fill),
+    .fill_way_o(fill_way),
+    .touch_o(touch),
+    .touch_way_o(touch_way)
   );
-
-  assign m_addr_o = {c_addr_i[AW-1:OFF], {OFF{1'b0}}};
-  assign sel_line = bypass ? m_data_i : rd_line;
-  assign c_data_o = sel_line[wsel*C_DW +: C_DW];
 
 endmodule
