@@ -8,7 +8,7 @@
 //  To switch policy (e.g. tree-PLRU) replace only this module.
 // -----------------------------------------------------------------------------
 module simple_cache_lru #(
-  parameter int NS = 64,
+  parameter int NS = 128,
   parameter int NW = 4,
   localparam int IDX_WD = (NS > 1) ? $clog2(NS) : 1,
   localparam int WAY_WD = (NW > 1) ? $clog2(NW) : 1
