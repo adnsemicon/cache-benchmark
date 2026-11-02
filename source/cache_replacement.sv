@@ -197,24 +197,14 @@ module cache_replacement #(
     // Adaptive ARC parameter adjustment
     // -----------------------------------------------------
 
-    if (ghost_b1_hit) begin
-
-      if (b1_count > 0) begin
-
-        if (b2_count > b1_count) delta_p = b2_count / b1_count;
-        else delta_p = 1;
-
+    if (ghost_b1_hit && (b1_count > 0)) begin
+      for (int q = 1; q <= NW; q++) begin
+        if (b2_count >= (q * b1_count)) delta_p = q;
       end
-
-    end else if (ghost_b2_hit) begin
-
-      if (b2_count > 0) begin
-
-        if (b1_count > b2_count) delta_p = b1_count / b2_count;
-        else delta_p = 1;
-
+    end else if (ghost_b2_hit && (b2_count > 0)) begin
+      for (int q = 1; q <= NW; q++) begin
+        if (b1_count >= (q * b2_count)) delta_p = q;
       end
-
     end
 
     // -----------------------------------------------------
