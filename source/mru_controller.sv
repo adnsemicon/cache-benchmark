@@ -17,26 +17,30 @@ module mru_controller #(
 );
 
   localparam int NUM_SETS = CL / NW;
-  localparam int AGE_W = (NW > 1) ? $clog2(NW) : 1;
+  localparam int AGE_W    = (NW > 1) ? $clog2(NW) : 1;
+
   logic [NUM_SETS-1:0][NW-1:0][AGE_W-1:0] age_mem;
 
   always_comb begin
-    logic [AGE_W-1:0] newest_age;
+    logic invalid_found;
+    invalid_found = 1'b0;
 
     victim_way_o = '0;
-    newest_age = {AGE_W{1'b1}};
 
+    // invalid-way-first allocation
     for (int w = 0; w < NW; w++) begin
       if (!valid_i[w]) begin
         victim_way_o = WAYW'(w);
+        invalid_found = 1'b1;
         break;
       end
     end
 
-    if (&valid_i) begin
-      for (int w = 0; w < NW; w++) begin
-        if (age_mem[index_i][w] < newest_age) begin
-          newest_age = age_mem[index_i][w];
+    // MRU victim selection: newest way wins (smallest age value)
+    if (!invalid_found) begin
+      victim_way_o = '0;
+      for (int w = 1; w < NW; w++) begin
+        if (age_mem[index_i][w] < age_mem[index_i][victim_way_o]) begin
           victim_way_o = WAYW'(w);
         end
       end
@@ -51,11 +55,15 @@ module mru_controller #(
         end
       end
     end else if (touch_i && (int'(touch_way_i) < NW)) begin
+      // touched way becomes most-recently-used (newest)
       for (int w = 0; w < NW; w++) begin
         if (w == int'(touch_way_i)) begin
           age_mem[index_i][w] <= '0;
-        end else if (age_mem[index_i][w] < age_mem[index_i][touch_way_i]) begin
-          age_mem[index_i][w] <= age_mem[index_i][w] + 1'b1;
+        end else begin
+          // move anything newer than the touched way one step older
+          if (age_mem[index_i][w] < AGE_W'(NW-1)) begin
+            age_mem[index_i][w] <= age_mem[index_i][w] + 1'b1;
+          end
         end
       end
     end
