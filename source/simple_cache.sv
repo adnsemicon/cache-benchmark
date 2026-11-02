@@ -16,10 +16,10 @@ module simple_cache #(
   output logic              c_gnt_o,
 
   // Memory Interface
+  input  logic [M_DW-1:0]   m_data_i,
+  input  logic              m_gnt_i,
   output logic [AW-1:0]     m_addr_o,
   output logic              m_req_o,
-  input  logic [M_DW-1:0]   m_data_i,
-  input  logic              m_gnt_i
 );
 
   // Derived Parameters
