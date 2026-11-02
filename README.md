@@ -6,7 +6,7 @@ Design and implement a parameterizable, read-only, **set-associative cache contr
 
 The cache sits between a requester (e.g., a CPU or DMA engine) that reads individual Cache data width `C_DW` and a backing main memory that transfers full cache lines of memory data width `M_DW`. Your implementation must support configurable address widths, data widths, number of cache lines, and set associativity, using any replacement policy as preferred.
 
----
+--- 
 
 ## 2. Module Interface
 
