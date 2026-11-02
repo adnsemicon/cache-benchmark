@@ -83,10 +83,10 @@ module simple_cache #(
     .c_data_o(c_data_o)
   );
 
-  // 3. LRU Controller Submodule
-  lru_controller #(
+  // 3. MRU Controller Submodule
+  mru_controller #(
     .CL(CL), .NW(NW), .IDXW((INDEX_W > 0) ? INDEX_W : 1), .WAYW(WAY_W)
-  ) u_lru_controller (
+  ) u_mru_controller (
     .clk_i(clk_i),
     .arst_ni(arst_ni),
     .index_i(c_index),
