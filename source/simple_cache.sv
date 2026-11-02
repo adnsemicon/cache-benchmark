@@ -19,7 +19,7 @@ module simple_cache #(
   input  logic [M_DW-1:0]   m_data_i,
   input  logic              m_gnt_i,
   output logic [AW-1:0]     m_addr_o,
-  output logic              m_req_o,
+  output logic              m_req_o
 );
 
   // Derived Parameters
