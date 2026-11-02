@@ -38,7 +38,7 @@ The cache sits between a requester (e.g., a CPU or DMA engine) that reads indivi
 | `m_data_i`                        | `input`   | `M_DW` | Full cache line data returned from main memory.                               |
 | `m_gnt_i`                         | `input`   | `1`    | Memory read grant (`1`: `m_data_i` is valid in the current cycle).            |
 
----
+--- 
 
 ## 3. Interaction Protocol
 
