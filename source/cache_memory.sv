@@ -65,23 +65,28 @@ module cache_memory #(
 
     end
 
+    // Victim metadata lookup
+    selected_victim_tag_o   = tag_mem[lookup_set_i][fill_way_i];
+
+    selected_victim_valid_o = valid_mem[lookup_set_i][fill_way_i];
+
   end
 
   always_ff @(posedge clk_i or negedge arst_ni) begin
 
     if (!arst_ni) begin
 
-      for (s = 0; s < SETS; s++) begin
-        for (w = 0; w < NW; w++) begin
+      for (int s = 0; s < SETS; s++) begin
+        for (int w = 0; w < NW; w++) begin
           valid_mem[s][w] <= 1'b0;
         end
       end
 
     end else if (fill_en_i) begin
 
-      valid_mem[fill_set_i][fill_way_i] <= 1'b1;
       tag_mem[fill_set_i][fill_way_i]   <= fill_tag_i;
       data_mem[fill_set_i][fill_way_i]  <= fill_line_i;
+      valid_mem[fill_set_i][fill_way_i] <= 1'b1;
 
     end
 

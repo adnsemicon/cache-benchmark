@@ -40,9 +40,9 @@ module cache_controller #(
   logic [AW-1:0] req_addr_q;
   logic [M_DW-1:0] response_line_q;
 
-  logic [SET_W-1:0] lookup_set;
+  logic [SET_IDX_W-1:0] lookup_set;
   logic [TAG_W-1:0] lookup_tag;
-  logic [OFFSET_W-1:0] lookup_offset;
+  logic [(WORD_IDX_W == 0 ? 1 : WORD_IDX_W)-1:0] lookup_offset;
 
   logic cache_hit;
   logic [WAY_W-1:0] cache_hit_way;
@@ -52,7 +52,7 @@ module cache_controller #(
   logic [WAY_W-1:0] victim_way;
 
   logic fill_en;
-  logic [SET_W-1:0] fill_set;
+  logic [SET_IDX_W-1:0] fill_set;
   logic [TAG_W-1:0] fill_tag;
   logic [M_DW-1:0] fill_line;
 
@@ -66,15 +66,25 @@ module cache_controller #(
 
     active_addr = (state_q == IDLE) ? c_addr_i : req_addr_q;
 
-    // Set index
+    // -------------------------------------------------
+    // Set index extraction
+    // -------------------------------------------------
+
     if (SETS <= 1) lookup_set = '0;
-    else lookup_set = active_addr >> LINE_OFF_W;
+    else lookup_set = active_addr[LINE_OFF_W+:SET_W];
 
-    // Word index inside the cache line
-    lookup_offset = active_addr >> WORD_BYTE_OFF_W;
+    // -------------------------------------------------
+    // Word index extraction
+    // -------------------------------------------------
 
+    if (WORD_IDX_W == 0) lookup_offset = '0;
+    else lookup_offset = active_addr[WORD_BYTE_OFF_W+:WORD_IDX_W];
+
+    // -------------------------------------------------
     // Tag extraction
-    lookup_tag = active_addr >> (LINE_OFF_W + SET_W);
+    // -------------------------------------------------
+
+    lookup_tag = active_addr[AW-1-:TAG_W];
 
   end
 
@@ -171,7 +181,7 @@ module cache_controller #(
       default: state_d = IDLE;
     endcase
 
-    if (OFFSET_W == 0) c_data_o = selected_line[C_DW-1:0];
+    if (LINE_WORDS <= 1) c_data_o = selected_line[C_DW-1:0];
     else c_data_o = selected_line[lookup_offset*C_DW+:C_DW];
   end
 

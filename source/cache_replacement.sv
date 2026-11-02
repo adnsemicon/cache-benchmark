@@ -89,6 +89,30 @@ module cache_replacement #(
 
   integer delta_p;
 
+  function automatic integer calculate_delta(input integer numerator, input integer denominator);
+
+    integer result;
+
+    begin
+
+      result = 1;
+
+      if (denominator > 0) begin
+
+        for (int q = 1; q <= NW; q++) begin
+
+          if (numerator >= (q * denominator)) result = q;
+
+        end
+
+      end
+
+      return result;
+
+    end
+
+  endfunction
+
   // ---------------------------------------------------------
   // ARC lookup and victim selection
   // ---------------------------------------------------------
@@ -198,13 +222,9 @@ module cache_replacement #(
     // -----------------------------------------------------
 
     if (ghost_b1_hit && (b1_count > 0)) begin
-      for (int q = 1; q <= NW; q++) begin
-        if (b2_count >= (q * b1_count)) delta_p = q;
-      end
+      delta_p = calculate_delta(b2_count, b1_count);
     end else if (ghost_b2_hit && (b2_count > 0)) begin
-      for (int q = 1; q <= NW; q++) begin
-        if (b1_count >= (q * b2_count)) delta_p = q;
-      end
+      delta_p = calculate_delta(b1_count, b2_count);
     end
 
     // -----------------------------------------------------
@@ -212,9 +232,7 @@ module cache_replacement #(
     // -----------------------------------------------------
 
     if (invalid_way >= 0) begin
-
       victim_way_o = WAY_W'(invalid_way);
-
     end
 
         else if (
