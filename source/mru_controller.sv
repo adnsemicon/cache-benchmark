@@ -1,5 +1,5 @@
-// lru_controller : MRU replacement with invalid-way-first allocation.
-module lru_controller #(
+// mru_controller : MRU replacement with invalid-way-first allocation.
+module mru_controller #(
   parameter int CL = 256,
   parameter int NW = 4,
   parameter int IDXW = (CL / NW > 1) ? $clog2(CL / NW) : 1,
