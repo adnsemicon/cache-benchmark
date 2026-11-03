@@ -32,6 +32,10 @@ module freq_sketch #(
     logic [$clog2(LIMIT+1)-1:0] adds_q;
     logic           age_now;
 
+    // hash once (not once per entry): keeps simulation fast for large tables
+    logic [IDX_W-1:0] inc_idx;
+    assign inc_idx = hash_f(inc_line_i);
+
     assign age_now = inc_en_i && (adds_q == LIMIT - 1);
 
     always_ff @(posedge clk_i or negedge arst_ni) begin
@@ -44,7 +48,7 @@ module freq_sketch #(
         always_ff @(posedge clk_i or negedge arst_ni) begin
             if (!arst_ni)                                              cnt_q[e] <= '0;
             else if (age_now)                                          cnt_q[e] <= cnt_q[e] >> 1;
-            else if (inc_en_i && hash_f(inc_line_i) == IDX_W'(e) && cnt_q[e] != CMAX)
+            else if (inc_en_i && inc_idx == IDX_W'(e) && cnt_q[e] != CMAX)
                                                                        cnt_q[e] <= cnt_q[e] + 1'b1;
         end
     end
